@@ -53,7 +53,7 @@ Requirements: `git`, `jq`, `perl`, `curl`, `gh` (logged in). Works with the bash
 **1. Add the marketplace and install the plugin** (once per machine), in Claude Code:
 
 ```
-/plugin marketplace add ~/Projects/agentic-workflow        # or lvnhmd/agentic-workflow once it's on GitHub
+/plugin marketplace add lvnhmd/agentic-workflow           # or a local clone's path, to try changes
 /plugin install agentic-workflow@agentic-workflow
 ```
 
@@ -62,8 +62,8 @@ branch, CI and stack, asks only what it can't detect, writes the project files, 
 project sections from the code, and finishes with `/doctor`. From a plain shell instead:
 
 ```bash
-~/Projects/agentic-workflow/install.sh .                     # interactive
-~/Projects/agentic-workflow/install.sh -y --tracker jira --prefix ABC --ci circleci --preset node .
+path/to/agentic-workflow/install.sh .                     # interactive, from a clone
+path/to/agentic-workflow/install.sh -y --tracker jira --prefix ABC --ci circleci --preset node .
 ```
 
 **3. Commit the setup on a branch.** Teammates who open the repo in Claude Code and trust the folder are
