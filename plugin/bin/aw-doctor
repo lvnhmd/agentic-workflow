@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+# aw-doctor — check that everything the agentic workflow needs in this repo actually works.
+#
+#   aw-doctor            all checks, including network calls to the tracker, GitHub and CI
+#   aw-doctor --offline  local checks only
+#   aw-doctor --json     machine-readable results
+#
+# Exit code: 0 all good, 1 at least one failure (warnings alone don't fail).
+set -uo pipefail
+# shellcheck source=../lib/lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/lib.sh"
+
+OFFLINE=0 JSON=0
+for a in "$@"; do
+  case "$a" in
+    --offline) OFFLINE=1 ;;
+    --json) JSON=1 ;;
+    -h|--help) sed -n '2,9p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) aw_die "unknown option $a" ;;
+  esac
+done
+
+RESULTS=""
+FAILS=0
+record() { # record ok|warn|fail "check" "detail / fix"
+  RESULTS="$RESULTS$1"$'\t'"$2"$'\t'"${3:-}"$'\n'
+  [ "$1" = fail ] && FAILS=$((FAILS + 1))
+  return 0
+}
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# ---------------------------------------------------------------- repository
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
+  record fail "git repository" "not inside a git repository"
+else
+  record ok "git repository" "$AW_ROOT"
+fi
+
+if [ ! -f "$AW_ROOT/.claude/workflow.env" ]; then
+  record fail "workflow config" "no .claude/workflow.env — run /init (or aw-init) to set the repo up"
+else
+  aw_load_config
+  if grep -q '{{[A-Z_]*}}' "$AW_ROOT/.claude/workflow.env"; then
+    record fail "workflow config" "unfilled placeholders: $(grep -o '{{[A-Z_]*}}' "$AW_ROOT/.claude/workflow.env" | sort -u | tr '\n' ' ')"
+  else
+    record ok "workflow config" "tracker=$TRACKER ci=$CI_PROVIDER default=$DEFAULT_BRANCH"
+  fi
+  case "$TRACKER" in jira|github) ;; *) record fail "TRACKER" "must be jira or github, got '$TRACKER'" ;; esac
+  case "$CI_PROVIDER" in github|circleci|none) ;; *) record fail "CI_PROVIDER" "must be github, circleci or none, got '$CI_PROVIDER'" ;; esac
+  [ "$TRACKER" = jira ] && [ -z "${TICKET_PREFIX:-}" ] && record fail "TICKET_PREFIX" "required for Jira (e.g. ABC)"
+  [ -n "${REPO_SLUG:-}" ] && [[ "$REPO_SLUG" == */* ]] || record fail "REPO_SLUG" "set it to owner/repo"
+fi
+
+# ------------------------------------------------------------------- tools
+for c in git jq curl perl; do
+  if have "$c"; then record ok "tool: $c"; else record fail "tool: $c" "install it (brew install $c)"; fi
+done
+if have gh; then record ok "tool: gh"; else record fail "tool: gh" "install the GitHub CLI (brew install gh)"; fi
+bash_major="${BASH_VERSINFO[0]}"
+record ok "bash" "$BASH_VERSION$([ "$bash_major" -lt 4 ] && echo ' (3.2 is supported)')"
+
+# ------------------------------------------------------------- local setup
+if [ -f "$AW_ROOT/.claude/workflow.env" ]; then
+  hooks_path="$(git config --get core.hooksPath || true)"
+  if [ "$hooks_path" = ".githooks" ]; then record ok "git hooks" "core.hooksPath=.githooks"
+  elif [ -d "$AW_ROOT/.husky" ]; then
+    if grep -qs '\.githooks/pre-commit' "$AW_ROOT/.husky/pre-commit" && grep -qs '\.githooks/pre-push' "$AW_ROOT/.husky/pre-push"; then
+      record ok "git hooks" "husky calls the kit's gates"
+    else
+      [ "$hooks_path" = ".husky" ] || record warn "git hooks" "husky hooks aren't active in this clone — run npm install (its prepare script sets them)"
+      record ok "git hooks (husky)" "husky runs the repo's own gates"
+    fi
+  elif [ -n "$hooks_path" ]; then record warn "git hooks" "core.hooksPath is '$hooks_path' — make sure it calls .githooks/pre-commit and pre-push"
+  else record fail "git hooks" "not enabled in this clone — run: git config core.hooksPath .githooks"; fi
+
+  PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  shadowed=""
+  for c in "$PLUGIN_ROOT"/commands/*.md; do
+    n="$(basename "$c" .md)"; [ -f "$AW_ROOT/.claude/commands/$n.md" ] && shadowed="$shadowed /$n"
+  done
+  [ -n "$shadowed" ] && record warn "command names" "the repo's own$shadowed take the short names; the plugin's are /agentic-workflow:<name>"
+  if [ -f "$AW_ROOT/.claude/settings.json" ] &&
+    jq -e '(.hooks // {}) | (has("PreToolUse") or has("PostToolUse") or has("Stop"))' "$AW_ROOT/.claude/settings.json" >/dev/null 2>&1; then
+    own="$(jq -r '[(.hooks // {}) | keys[] | select(. == "PreToolUse" or . == "PostToolUse" or . == "Stop")] | join(", ")' "$AW_ROOT/.claude/settings.json")"
+    record warn "Claude Code hooks" "settings.json also defines $own — runs alongside the plugin's (fine if deliberate, e.g. a stricter project guard)"
+  fi
+  if [ -f "$AW_ROOT/.claude/settings.json" ] &&
+    ! jq -e '.enabledPlugins["agentic-workflow@agentic-workflow"] == true' "$AW_ROOT/.claude/settings.json" >/dev/null 2>&1; then
+    record warn "plugin enabled for the repo" "not in .claude/settings.json — teammates won't be offered the plugin (run aw-init --update)"
+  fi
+
+  hook_files=".githooks/pre-commit .githooks/pre-push"; [ -d "$AW_ROOT/.husky" ] && hook_files=""
+  for f in $hook_files scripts/agentic/verify.sh scripts/agentic/lib.sh scripts/agentic/check-adr-sync.sh; do
+    if [ -f "$AW_ROOT/$f" ]; then
+      [ -x "$AW_ROOT/$f" ] || [[ "$f" == *lib.sh ]] || record warn "$f" "not executable — chmod +x $f"
+    else
+      record fail "$f" "missing — run aw-init --update"
+    fi
+  done
+
+  if [ -f "$AW_ROOT/.claude/verify-steps" ]; then
+    n="$(grep -cvE '^[[:space:]]*(#|$)' "$AW_ROOT/.claude/verify-steps" || true)"
+    if [ "$n" -le 1 ]; then record warn "verify steps" "only $n step(s) in .claude/verify-steps — add your lint/test/build commands"
+    else record ok "verify steps" "$n steps ($(grep -cE '^[[:space:]]*fast' "$AW_ROOT/.claude/verify-steps" || true) fast)"; fi
+  else
+    record fail "verify steps" ".claude/verify-steps missing"
+  fi
+
+  if git check-ignore -q "$AW_ROOT/.env" 2>/dev/null; then record ok ".env ignored"
+  else record fail ".env ignored" ".env is not git-ignored — add it to .gitignore"; fi
+
+  if git ls-files --error-unmatch PROGRESS.md >/dev/null 2>&1; then
+    record fail "PROGRESS.md" "is tracked by git — git rm --cached PROGRESS.md"
+  fi
+
+  if [ -f "$AW_ROOT/CLAUDE.md" ]; then
+    if grep -q '<!-- What the product is' "$AW_ROOT/CLAUDE.md"; then
+      record warn "CLAUDE.md" "project sections are still placeholders — fill in overview, repo map and required reading"
+    else record ok "CLAUDE.md"; fi
+  else
+    record warn "CLAUDE.md" "missing"
+  fi
+
+  if [ -n "${FORMAT_FILE_CMD:-}" ]; then
+    first="${FORMAT_FILE_CMD%% *}"; [ "$first" = npx ] && first="$(echo "$FORMAT_FILE_CMD" | awk '{for(i=2;i<=NF;i++) if ($i !~ /^-/) {print $i; exit}}')"
+    if have "$first" || [ -x "$AW_ROOT/node_modules/.bin/$first" ]; then record ok "formatter" "$FORMAT_FILE_CMD"
+    else record warn "formatter" "'$first' not found — agent edits won't be formatted until it's installed"; fi
+  fi
+fi
+
+# ----------------------------------------------------------------- network
+if [ "$OFFLINE" -eq 0 ] && [ -f "$AW_ROOT/.claude/workflow.env" ]; then
+  if have gh; then
+    if gh auth status >/dev/null 2>&1; then
+      record ok "gh auth" "$(gh api user --jq .login 2>/dev/null || echo logged in)"
+      if [ -n "${REPO_SLUG:-}" ] && gh repo view "$REPO_SLUG" --json name >/dev/null 2>&1; then record ok "GitHub repo" "$REPO_SLUG reachable"
+      else record fail "GitHub repo" "can't read $REPO_SLUG with your gh login"; fi
+    else
+      record fail "gh auth" "run: gh auth login"
+    fi
+  fi
+
+  if [ "$TRACKER" = jira ]; then
+    missing=""
+    for v in JIRA_BASE_URL JIRA_EMAIL JIRA_API_TOKEN; do [ -n "${!v:-}" ] || missing="$missing $v"; done
+    if [ -n "$missing" ]; then
+      record fail "Jira credentials" "missing in .env:$missing"
+    else
+      me="$(curl -sS -m 15 -u "$JIRA_EMAIL:$JIRA_API_TOKEN" -H 'Accept: application/json' "${JIRA_BASE_URL%/}/rest/api/2/myself" 2>/dev/null || true)"
+      if jq -e .accountId >/dev/null 2>&1 <<<"$me"; then
+        record ok "Jira login" "$(jq -r .displayName <<<"$me")"
+        [ -z "${JIRA_ACCOUNT_ID:-}" ] && record warn "JIRA_ACCOUNT_ID" "not set in .env; your account ID is $(jq -r .accountId <<<"$me")"
+        statuses="$(curl -sS -m 15 -u "$JIRA_EMAIL:$JIRA_API_TOKEN" -H 'Accept: application/json' \
+          "${JIRA_BASE_URL%/}/rest/api/2/project/${TICKET_PREFIX}/statuses" 2>/dev/null | jq -r '[.[].statuses[].name] | unique | .[]' 2>/dev/null || true)"
+        if [ -z "$statuses" ]; then
+          record fail "Jira project" "can't read statuses of project $TICKET_PREFIX — check TICKET_PREFIX and your access"
+        else
+          for s in "$STATUS_IN_PROGRESS" "$STATUS_REVIEW" "$STATUS_QA" "$STATUS_DONE"; do
+            if grep -qixF "$s" <<<"$statuses"; then record ok "Jira status: $s"
+            else record fail "Jira status: $s" "not in project $TICKET_PREFIX; available: $(tr '\n' ',' <<<"$statuses" | sed 's/,$//; s/,/, /g') — fix STATUS_* in workflow.env"; fi
+          done
+        fi
+      else
+        record fail "Jira login" "credentials rejected by $JIRA_BASE_URL"
+      fi
+    fi
+  fi
+
+  case "$CI_PROVIDER" in
+    github)
+      if have gh && gh run list --repo "$REPO_SLUG" --limit 1 --json databaseId >/dev/null 2>&1; then record ok "CI (GitHub Actions)" "runs readable"
+      else record warn "CI (GitHub Actions)" "can't list workflow runs for $REPO_SLUG"; fi ;;
+    circleci)
+      if [ -z "${CIRCLECI_TOKEN:-}" ]; then record fail "CI (CircleCI)" "CIRCLECI_TOKEN missing in .env"
+      elif curl -sS -m 15 -H "Circle-Token: $CIRCLECI_TOKEN" "https://circleci.com/api/v2/project/${CIRCLECI_PROJECT_SLUG:-gh/$REPO_SLUG}" | jq -e .slug >/dev/null 2>&1; then
+        record ok "CI (CircleCI)" "project readable"
+      else record fail "CI (CircleCI)" "token can't read project ${CIRCLECI_PROJECT_SLUG:-gh/$REPO_SLUG}"; fi ;;
+  esac
+fi
+
+# ------------------------------------------------------------------ output
+if [ "$JSON" -eq 1 ]; then
+  printf '%s' "$RESULTS" | jq -R -s 'split("\n") | map(select(length > 0) | split("\t") | {status: .[0], check: .[1], detail: .[2]})'
+else
+  printf '%s' "$RESULTS" | while IFS=$'\t' read -r st check detail; do
+    case "$st" in ok) mark="✓" ;; warn) mark="!" ;; *) mark="✗" ;; esac
+    printf '%s %-28s %s\n' "$mark" "$check" "$detail"
+  done
+  echo ""
+  if [ "$FAILS" -eq 0 ]; then echo "All required checks passed."; else echo "$FAILS check(s) failed."; fi
+fi
+[ "$FAILS" -eq 0 ]

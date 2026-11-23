@@ -1,0 +1,355 @@
+#!/usr/bin/env bash
+# aw-init — set a repository up for the agentic-workflow plugin, or refresh that setup.
+#
+#   aw-init [options] <target-repo>        (also: <kit>/install.sh, or /init inside Claude Code)
+#
+# Options (anything not given is detected, then asked for when running in a terminal):
+#   --name <name>             Project name                         (default: target folder name)
+#   --repo <owner/repo>       GitHub repository                    (default: from git remote origin)
+#   --tracker jira|github     Ticket tracker                       (default: github)
+#   --prefix <KEY>            Jira project key, e.g. ABC           (jira only)
+#   --ci github|circleci|none CI provider                          (default: detected from the repo)
+#   --preset node|python|generic  Verify steps + formatters         (default: detected from the repo)
+#   --default-branch <name>   Default branch                       (default: from origin, else main)
+#   --marketplace <src>       Where teammates get the plugin: owner/repo on GitHub, or a local path
+#                             (default: this kit's GitHub remote, else its folder)
+#   --update                  Refresh kit-managed files only; never touches your config or docs
+#   --force                   Overwrite every file, including project-owned ones (careful)
+#   --dry-run                 Show what would happen, change nothing
+#   -y, --yes                 Don't ask; accept detected defaults
+#
+# Commands, agents, skills and Claude Code hooks live in the plugin, not in the repo. The repo gets:
+#   managed  — git hooks, scripts/agentic (verify, ADR sync — git hooks and CI run them without Claude),
+#              the ADR template, .env.workflow.example. Refreshed by --update.
+#   seeded   — CLAUDE.md, CONTRIBUTING.md, AGENTS.md, workflow.env, verify-steps, docs, PR template.
+#              Written only if missing. Yours from then on.
+#   merged   — .claude/settings.json (enables the plugin), .mcp.json, .gitignore.
+set -euo pipefail
+
+KIT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"   # the plugin folder
+TEMPLATE="$KIT_DIR/project-template"
+KIT_VERSION="$(jq -r '.version // "dev"' "$KIT_DIR/.claude-plugin/plugin.json" 2>/dev/null || echo dev)"
+
+NAME="" REPO="" TRACKER="" PREFIX="" CI="" PRESET="" DEFAULT_BRANCH="" MARKETPLACE=""
+MODE="install" DRY=0 YES=0 TARGET=""
+
+usage() { sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+die() { echo "aw-init: $*" >&2; exit 1; }
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --name) NAME="$2"; shift 2 ;;
+    --repo) REPO="$2"; shift 2 ;;
+    --tracker) TRACKER="$2"; shift 2 ;;
+    --prefix) PREFIX="$2"; shift 2 ;;
+    --ci) CI="$2"; shift 2 ;;
+    --preset) PRESET="$2"; shift 2 ;;
+    --default-branch) DEFAULT_BRANCH="$2"; shift 2 ;;
+    --marketplace) MARKETPLACE="$2"; shift 2 ;;
+    --update) MODE="update"; shift ;;
+    --force) MODE="force"; shift ;;
+    --dry-run) DRY=1; shift ;;
+    -y|--yes) YES=1; shift ;;
+    -h|--help) usage 0 ;;
+    -*) die "unknown option $1 (see --help)" ;;
+    *) TARGET="$1"; shift ;;
+  esac
+done
+
+[ -n "$TARGET" ] || usage 1
+[ -d "$TARGET" ] || die "$TARGET is not a directory"
+TARGET="$(cd "$TARGET" && pwd)"
+case "$TARGET/" in "$KIT_DIR/"*|"$(dirname "$KIT_DIR")/") die "target is the kit itself" ;; esac
+for c in git jq perl; do command -v "$c" >/dev/null 2>&1 || die "'$c' is required (brew install $c)"; done
+git -C "$TARGET" rev-parse --git-dir >/dev/null 2>&1 || die "$TARGET is not a git repository (git init first)"
+
+ask() { # ask VAR "question" default
+  local var="$1" q="$2" def="$3" ans
+  if [ "$YES" -eq 0 ] && [ -t 0 ]; then
+    read -r -p "$q [$def]: " ans || true
+    printf -v "$var" '%s' "${ans:-$def}"
+  else
+    printf -v "$var" '%s' "$def"
+  fi
+}
+
+existing_value() { # read a value from the target's workflow.env, if it has one
+  local f="$TARGET/.claude/workflow.env"
+  [ -f "$f" ] && grep -E "^$1=" "$f" | head -1 | cut -d= -f2- | sed -E 's/^"(.*)"$/\1/' || true
+}
+
+# ------------------------------------------------------------------- detection
+if [ "$MODE" != "update" ]; then
+  origin="$(git -C "$TARGET" remote get-url origin 2>/dev/null || true)"
+  detected_repo="$(printf '%s' "$origin" | sed -nE 's#^(git@[^:]+:|https?://[^/]+/|ssh://git@[^/]+/)([^/]+/[^/]+)$#\2#p' | sed -E 's/\.git$//')"
+  detected_branch="$(git -C "$TARGET" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || true)"
+  [ -n "$detected_branch" ] || detected_branch="$(git -C "$TARGET" symbolic-ref --short HEAD 2>/dev/null || echo main)"
+  [ "$detected_branch" = "HEAD" ] && detected_branch=main
+  if [ -d "$TARGET/.circleci" ]; then detected_ci=circleci
+  elif [ -d "$TARGET/.github/workflows" ]; then detected_ci=github
+  else detected_ci=github; fi
+  if [ -f "$TARGET/package.json" ]; then detected_preset=node
+  elif [ -f "$TARGET/pyproject.toml" ] || [ -f "$TARGET/requirements.txt" ] || [ -f "$TARGET/setup.py" ]; then detected_preset=python
+  else detected_preset=generic; fi
+
+  [ -n "$NAME" ] || ask NAME "Project name" "$(existing_value PROJECT_NAME | grep -v '{{' || basename "$TARGET")"
+  [ -n "$NAME" ] || NAME="$(basename "$TARGET")"
+  [ -n "$REPO" ] || ask REPO "GitHub repo (owner/repo)" "${detected_repo:-owner/repo}"
+  [ -n "$DEFAULT_BRANCH" ] || ask DEFAULT_BRANCH "Default branch" "$detected_branch"
+  [ -n "$TRACKER" ] || ask TRACKER "Ticket tracker (jira|github)" "github"
+  case "$TRACKER" in jira|github) ;; *) die "--tracker must be jira or github" ;; esac
+  if [ "$TRACKER" = jira ] && [ -z "$PREFIX" ]; then ask PREFIX "Jira project key (e.g. WEI)" "PROJ"; fi
+  PREFIX="$(printf '%s' "$PREFIX" | tr '[:lower:]' '[:upper:]')"
+  [ -n "$CI" ] || ask CI "CI provider (github|circleci|none)" "$detected_ci"
+  case "$CI" in github|circleci|none) ;; *) die "--ci must be github, circleci or none" ;; esac
+  [ -n "$PRESET" ] || ask PRESET "Preset (node|python|generic)" "$detected_preset"
+  [ -f "$KIT_DIR/presets/$PRESET.env" ] || die "unknown preset $PRESET"
+
+  # Preset values (FORMAT_*, LINT_FIX_*, DEV_CMD, APP_URL, VERIFY_STEPS)
+  # shellcheck disable=SC1090
+  source "$KIT_DIR/presets/$PRESET.env"
+  # A Node project that already has `npm run verify` keeps it as the full suite; the fast tier on push
+  # stays the cheap checks it actually defines.
+  if [ "$PRESET" = node ] && jq -e '.scripts.verify' "$TARGET/package.json" >/dev/null 2>&1; then
+    VERIFY_STEPS=""
+    for sc in lint typecheck test; do
+      jq -e --arg s "$sc" '.scripts[$s]' "$TARGET/package.json" >/dev/null 2>&1 &&
+        VERIFY_STEPS="$VERIFY_STEPS"$'\n'"fast | $sc | npm run --silent $sc"
+    done
+    VERIFY_STEPS="${VERIFY_STEPS#$'\n'}"$'\n'"full | Project verify (npm run verify) | npm run --silent verify"
+  fi
+
+  if [ "$TRACKER" = jira ]; then
+    BRANCH_EXAMPLE="$(printf '%s' "$PREFIX" | tr '[:upper:]' '[:lower:]')-42-export-button"
+    COMMIT_EXAMPLE="$PREFIX-42: feat: add export button"
+  else
+    BRANCH_EXAMPLE="42-export-button"
+    COMMIT_EXAMPLE="#42: feat: add export button"
+  fi
+
+  export AW_PROJECT_NAME="$NAME" AW_REPO_SLUG="$REPO" AW_DEFAULT_BRANCH="$DEFAULT_BRANCH" \
+    AW_TRACKER="$TRACKER" AW_TICKET_PREFIX="$PREFIX" AW_CI_PROVIDER="$CI" \
+    AW_FORMAT_FILE_CMD="$FORMAT_FILE_CMD" AW_FORMAT_FILE_REGEX="$FORMAT_FILE_REGEX" \
+    AW_LINT_FIX_FILE_CMD="$LINT_FIX_FILE_CMD" AW_LINT_FIX_FILE_REGEX="$LINT_FIX_FILE_REGEX" \
+    AW_DEV_CMD="$DEV_CMD" AW_APP_URL="$APP_URL" AW_VERIFY_STEPS="$VERIFY_STEPS" \
+    AW_BRANCH_EXAMPLE="$BRANCH_EXAMPLE" AW_COMMIT_EXAMPLE="$COMMIT_EXAMPLE"
+else
+  [ -f "$TARGET/.claude/workflow.env" ] || die "--update needs an existing install (.claude/workflow.env not found)"
+  # Seeded files new to this kit version still get rendered, from the values already configured.
+  for v in PROJECT_NAME REPO_SLUG DEFAULT_BRANCH TRACKER TICKET_PREFIX CI_PROVIDER; do
+    val="$(existing_value "$v")"
+    export "AW_$v=$val"
+  done
+fi
+AW_TODAY="$(date +%Y-%m-%d)"
+export AW_TODAY
+
+# ------------------------------------------------------- plugin marketplace
+# Where teammates' Claude Code fetches the plugin from, written into .claude/settings.json.
+MKT_ROOT="$(dirname "$KIT_DIR")"
+if [ -z "$MARKETPLACE" ] && [ -f "$TARGET/.claude/settings.json" ]; then
+  MARKETPLACE_JSON="$(jq -c '.extraKnownMarketplaces["agentic-workflow"].source // empty' "$TARGET/.claude/settings.json" 2>/dev/null || true)"
+fi
+if [ -z "${MARKETPLACE_JSON:-}" ]; then
+  if [ -z "$MARKETPLACE" ]; then
+    kit_remote="$(git -C "$MKT_ROOT" remote get-url origin 2>/dev/null || true)"
+    MARKETPLACE="$(printf '%s' "$kit_remote" | sed -nE 's#^(git@github\.com:|https://github\.com/)([^/]+/[^/]+)$#\2#p' | sed -E 's/\.git$//')"
+    [ -n "$MARKETPLACE" ] || MARKETPLACE="$MKT_ROOT"
+  fi
+  if [[ "$MARKETPLACE" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] && [ ! -e "$MARKETPLACE" ]; then
+    MARKETPLACE_JSON="$(jq -nc --arg r "$MARKETPLACE" '{source: "github", repo: $r}')"
+  else
+    MARKETPLACE="$(cd "$MARKETPLACE" 2>/dev/null && pwd)" || die "--marketplace: no such folder"
+    [ -f "$MARKETPLACE/.claude-plugin/marketplace.json" ] || die "$MARKETPLACE has no .claude-plugin/marketplace.json"
+    case "$MARKETPLACE" in */.claude/plugins/*)
+      echo "  NOTE: the plugin is running from Claude Code's plugin cache; pass --marketplace owner/repo so"
+      echo "        teammates can install it." ;;
+    esac
+    MARKETPLACE_JSON="$(jq -nc --arg p "$MARKETPLACE" '{source: "directory", path: $p}')"
+  fi
+fi
+export AW_MARKETPLACE_SOURCE_JSON="$MARKETPLACE_JSON"
+
+# -------------------------------------------------------------- file groups
+is_managed() {
+  case "$1" in
+    scripts/agentic/*|.githooks/pre-commit|.githooks/pre-push|docs/adr/TEMPLATE.md|.env.workflow.example) return 0 ;;
+  esac
+  return 1
+}
+is_merged() { case "$1" in .claude/settings.json|.mcp.json) return 0 ;; esac; return 1; }
+
+written=0 kept=0 merged=0
+render() { # render <src> <dest>: copy with {{PLACEHOLDER}} substitution from AW_* env vars
+  perl -pe 's/\{\{([A-Z_]+)\}\}/exists $ENV{"AW_$1"} ? $ENV{"AW_$1"} : $&/ge' "$1" > "$2"
+}
+
+say() { if [ "$DRY" -eq 1 ]; then echo "  would $*"; else echo "  $*"; fi; }
+
+uses_husky=0
+if [ -d "$TARGET/.husky" ] || { [ -f "$TARGET/package.json" ] && jq -e '(.scripts.prepare // "") | test("husky|hooksPath")' "$TARGET/package.json" >/dev/null 2>&1; }; then
+  uses_husky=1
+fi
+
+echo "agentic-workflow $KIT_VERSION → $TARGET ($MODE)"
+existing_adrs=""
+for f in "$TARGET"/docs/adr/ADR-[0-9]*; do [ -e "$f" ] && existing_adrs="$existing_adrs$(basename "$f")"$'\n'; done
+last_adr="$(printf '%s\n' "$existing_adrs" | sed -nE 's/^ADR-0*([0-9]+).*/\1/p' | sort -n | tail -1)"
+next_adr="$(printf '%04d' $(( ${last_adr:-0} + 1 )))"
+cd "$TEMPLATE"
+while IFS= read -r -d '' src; do
+  src="${src#./}"
+  # Top-level dotfiles are stored as dot-<name> (dot-claude/, dot-githooks/, dot-mcp.json...), so the
+  # kit folder never acts as a live Claude/git/MCP config itself; they get their real names here.
+  rel="$src"
+  case "$rel" in dot-*) rel=".${rel#dot-}" ;; esac
+  dest="$TARGET/$rel"
+
+  # Husky repos keep their own git hooks; .githooks/ would be files nothing runs.
+  case "$rel" in .githooks/*) [ "$uses_husky" -eq 1 ] && [ ! -e "$dest" ] && continue ;; esac
+
+  # Docs skeleton: only seed folders that don't already hold the project's own docs.
+  case "$rel" in
+    docs/architecture/attack-surface.md) ;;                      # always useful, seeded if missing
+    docs/adr/ADR-*)
+      if [ -n "$existing_adrs" ]; then
+        case "$rel" in
+          *record-architecture-decisions*) continue ;;           # the project already records ADRs
+          *agentic-development-workflow*)
+            if grep -rlq "agentic-workflow" "$TARGET/docs/adr" 2>/dev/null; then continue; fi
+            rel="docs/adr/ADR-$next_adr-agentic-development-workflow.md"; dest="$TARGET/$rel" ;;
+        esac
+      fi ;;
+    docs/*.md)
+      d="$(dirname "$rel")"
+      if [ ! -e "$dest" ] && [ -d "$TARGET/$d" ] && ls "$TARGET/$d"/*.md >/dev/null 2>&1 && [ "$rel" != docs/adr/TEMPLATE.md ]; then
+        kept=$((kept + 1)); continue
+      fi ;;
+  esac
+
+  if is_merged "$rel"; then
+    if [ -f "$dest" ]; then
+      say "merge  $rel"
+      if [ "$DRY" -eq 0 ]; then
+        tmp="$(mktemp)"; kit="$(mktemp)"
+        render "$src" "$kit"
+        if [ "$rel" = ".claude/settings.json" ]; then
+          # Kit marketplace + plugin are added; your own entries win. allow/deny lists are unioned.
+          # Kit hook groups (none today) are added unless an identical command is already wired.
+          jq -s '
+            .[0] as $mine | .[1] as $kit
+            | $mine
+            | .extraKnownMarketplaces = (($kit.extraKnownMarketplaces // {}) + ($mine.extraKnownMarketplaces // {}))
+            | .enabledPlugins = (($kit.enabledPlugins // {}) + ($mine.enabledPlugins // {}))
+            | .permissions.allow = ((($mine.permissions.allow // []) + ($kit.permissions.allow // [])) | unique)
+            | .permissions.deny = ((($mine.permissions.deny // []) + ($kit.permissions.deny // [])) | unique)
+            | if ($kit.hooks // {}) == {} then . else
+              .hooks = (reduce ($kit.hooks | to_entries[]) as $e (($mine.hooks // {});
+                .[$e.key] = ((.[$e.key] // []) as $cur
+                  | $cur + [$e.value[] | select(.hooks[0].command as $c | ($cur | map(.hooks[]?.command) | index($c)) | not)]))) end
+          ' "$dest" "$kit" > "$tmp"
+        else
+          jq -s '.[0] * {mcpServers: ((.[1].mcpServers // {}) + (.[0].mcpServers // {}))}' "$dest" "$kit" > "$tmp"
+        fi
+        mv "$tmp" "$dest"; rm -f "$kit"
+      fi
+      merged=$((merged + 1)); continue
+    fi
+  elif [ -e "$dest" ]; then
+    if [ "$MODE" = "force" ] || { [ "$MODE" = "update" ] && is_managed "$rel"; }; then
+      if cmp -s <(render "$src" /dev/stdout) "$dest"; then kept=$((kept + 1)); continue; fi
+    else
+      if is_managed "$rel" && ! cmp -s <(render "$src" /dev/stdout) "$dest"; then
+        echo "  keep   $rel (already exists and differs — rerun with --update to replace it)"
+      fi
+      kept=$((kept + 1)); continue
+    fi
+  fi
+  say "write  $rel"
+  if [ "$DRY" -eq 0 ]; then
+    mkdir -p "$(dirname "$dest")"
+    render "$src" "$dest"
+    case "$rel" in *.sh|.githooks/*) chmod +x "$dest" ;; esac
+    # An ADR renumbered to fit the project's sequence gets the matching number in its heading too.
+    case "$rel" in docs/adr/ADR-[0-9]*)
+      n="$(basename "$rel" | sed -E 's/^ADR-([0-9]+).*/\1/')"
+      perl -pi -e "s/^# ADR-[0-9]+:/# ADR-$n:/ if \$. == 1" "$dest" ;;
+    esac
+  fi
+  written=$((written + 1))
+done < <(find . -type f -print0 | sort -z)
+
+# Upgrading from 0.1 (files copied into the repo): the plugin now provides these.
+if [ -f "$TARGET/CLAUDE.md" ] && grep -q '^@.claude/workflow-contract.md' "$TARGET/CLAUDE.md"; then
+  say "remove the old workflow-contract import from CLAUDE.md (the plugin loads it now)"
+  [ "$DRY" -eq 1 ] || perl -ni -e 'print unless /^\@\.claude\/workflow-contract\.md\s*$/' "$TARGET/CLAUDE.md"
+fi
+if [ -e "$TARGET/.claude/workflow-contract.md" ] || [ -e "$TARGET/scripts/agentic/tracker.sh" ]; then
+  echo "  NOTE: files from the 0.1 copy-in version are still here (.claude/workflow-contract.md,"
+  echo "        .claude/commands, .claude/agents, .claude/skills, scripts/agentic/{tracker,ci}.sh, scripts/agentic/hooks)."
+  echo "        The plugin provides them now: delete them unless you customised them."
+fi
+shadowed=""
+for c in "$KIT_DIR"/commands/*.md; do
+  n="$(basename "$c" .md)"; [ -f "$TARGET/.claude/commands/$n.md" ] && shadowed="$shadowed /$n"
+done
+for a in "$KIT_DIR"/agents/*.md; do
+  n="$(basename "$a" .md)"; [ -f "$TARGET/.claude/agents/$n.md" ] && shadowed="$shadowed $n(agent)"
+done
+if [ -n "$shadowed" ]; then
+  echo "  NOTE: the repo has its own$shadowed. Those take the short names; the plugin's versions"
+  echo "        stay available as /agentic-workflow:<name>. Delete the repo's copies to switch over."
+fi
+if [ -f "$TARGET/.claude/settings.json" ] && jq -e '(.hooks // {}) | (has("PreToolUse") or has("PostToolUse") or has("Stop"))' "$TARGET/.claude/settings.json" >/dev/null 2>&1; then
+  own="$(jq -r '[(.hooks // {}) | keys[] | select(. == "PreToolUse" or . == "PostToolUse" or . == "Stop")] | join(", ")' "$TARGET/.claude/settings.json")"
+  echo "  NOTE: .claude/settings.json has its own $own hook(s). The plugin adds the same kind of"
+  echo "        guardrails, so both will run. Keep the repo's if they're stricter, or remove them."
+fi
+
+# .gitignore: .env must be ignored. PROGRESS.md deliberately is NOT (it must stay visible in git status).
+if ! grep -qxE '\.env' "$TARGET/.gitignore" 2>/dev/null; then
+  say "add .env to .gitignore"
+  [ "$DRY" -eq 1 ] || printf '\n# local secrets (agentic workflow)\n.env\n' >> "$TARGET/.gitignore"
+fi
+
+# Git hooks
+current_hooks="$(git -C "$TARGET" config --get core.hooksPath || true)"
+if [ "$uses_husky" -eq 1 ] && [ "$current_hooks" != ".githooks" ]; then
+  echo "  NOTE: this repo manages git hooks with husky (.husky/): core.hooksPath was left alone and no"
+  echo "        .githooks/ were added. Make sure husky's hooks cover branch protection, PROGRESS.md, secrets"
+  echo "        and a verify run (the kit's .githooks/pre-commit and pre-push show what they check)."
+elif [ "$current_hooks" != ".githooks" ]; then
+  if [ -n "$current_hooks" ]; then
+    echo "  NOTE: core.hooksPath is '$current_hooks' (husky or similar). Call .githooks/pre-commit and"
+    echo "        .githooks/pre-push from your existing hooks, or run: git config core.hooksPath .githooks"
+  else
+    say "enable git hooks (git config core.hooksPath .githooks)"
+    [ "$DRY" -eq 1 ] || git -C "$TARGET" config core.hooksPath .githooks
+  fi
+fi
+
+[ "$DRY" -eq 1 ] || printf '%s\n' "$KIT_VERSION" > "$TARGET/.claude/agentic-workflow.version"
+
+echo ""
+echo "Done: $written written, $merged merged, $kept kept as they were."
+if [ "$MODE" != "update" ] && [ "$DRY" -eq 0 ]; then
+  if [ "$uses_husky" -eq 1 ]; then hooks_step="Git hooks stay with husky: wire in .githooks/pre-commit and pre-push as noted above, or keep husky's gates."
+  else hooks_step="Teammates run once after cloning: git config core.hooksPath .githooks"; fi
+  branch_now="$(git -C "$TARGET" symbolic-ref --short HEAD 2>/dev/null || true)"
+  if [ -n "$branch_now" ] && [ "$branch_now" != "$DEFAULT_BRANCH" ]; then
+    commit_step="Commit on this branch ($branch_now): git add -A && git commit -m \"chore: add agentic workflow\""
+  else
+    commit_step="Commit on a branch: git checkout -b chore/agentic-workflow && git add -A && git commit -m \"chore: add agentic workflow\""
+  fi
+  cat <<EOF
+
+Next steps
+  1. Open Claude Code in the repo and trust the folder: it offers to install the agentic-workflow plugin
+     (enabled in .claude/settings.json). Or: /plugin marketplace add <source>, /plugin install agentic-workflow@agentic-workflow
+  2. Run /doctor, then fill in the project sections of CLAUDE.md (or ask Claude to draft them).
+  3. Check .claude/verify-steps matches your CI: scripts/agentic/verify.sh --list
+  4. Copy the credentials you need from .env.workflow.example into .env.
+  5. $hooks_step
+  6. $commit_step
+EOF
+fi

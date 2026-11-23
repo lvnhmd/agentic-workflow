@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# aw-config — read the agentic-workflow configuration of the current repo.
+#
+#   aw-config            every setting from .claude/workflow.env, resolved with defaults (KEY=value)
+#   aw-config <KEY>      one value, e.g. aw-config DEFAULT_BRANCH
+#
+# Values come from .claude/workflow.env, then the developer's .env. Secrets (tokens, passwords,
+# API keys) are never printed: ask for one and you get an error instead.
+set -euo pipefail
+# shellcheck source=../lib/lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/lib.sh"
+aw_load_config
+
+is_secret() { [[ "$1" =~ (TOKEN|SECRET|PASSWORD|PASS|API_KEY|_KEY)$ ]]; }
+
+case "${1:-}" in
+  -h|--help) sed -n '2,8p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
+  "")
+    [ -f "$AW_ROOT/.claude/workflow.env" ] || aw_die "no .claude/workflow.env in $AW_ROOT — run aw-init (or /init) first"
+    grep -oE '^[A-Z_][A-Z0-9_]*=' "$AW_ROOT/.claude/workflow.env" | tr -d '=' | while read -r k; do
+      printf '%s=%s\n' "$k" "${!k-}"
+    done
+    for k in DEFAULT_BRANCH TRACKER CI_PROVIDER ATTRIBUTION STATUS_IN_PROGRESS STATUS_REVIEW STATUS_QA STATUS_DONE; do
+      grep -qE "^$k=" "$AW_ROOT/.claude/workflow.env" || printf '%s=%s  (default)\n' "$k" "${!k-}"
+    done
+    ;;
+  *)
+    key="$1"
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || aw_die "not a variable name: $key"
+    is_secret "$key" && aw_die "$key is a secret; the scripts read it from .env themselves"
+    printf '%s\n' "${!key-}"
+    ;;
+esac

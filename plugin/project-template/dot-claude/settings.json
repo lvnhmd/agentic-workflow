@@ -1,0 +1,43 @@
+{
+  "extraKnownMarketplaces": {
+    "agentic-workflow": {
+      "source": {{MARKETPLACE_SOURCE_JSON}}
+    }
+  },
+  "enabledPlugins": {
+    "agentic-workflow@agentic-workflow": true
+  },
+  "permissions": {
+    "allow": [
+      "mcp__playwright__*",
+      "Bash(aw-tracker get:*)",
+      "Bash(aw-tracker comments:*)",
+      "Bash(aw-tracker key:*)",
+      "Bash(aw-tracker from-branch:*)",
+      "Bash(aw-tracker url:*)",
+      "Bash(aw-ci status:*)",
+      "Bash(aw-ci logs:*)",
+      "Bash(aw-ci scheduled:*)",
+      "Bash(aw-config:*)",
+      "Bash(aw-doctor:*)",
+      "Bash(scripts/agentic/verify.sh:*)",
+      "Bash(bash scripts/agentic/verify.sh:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git branch --show-current)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr diff:*)",
+      "Bash(gh pr checks:*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.local)",
+      "Read(./.env.production)",
+      "Read(./**/.env)",
+      "Bash(sudo:*)",
+      "Bash(git push --force origin main:*)",
+      "Bash(git push -f origin main:*)"
+    ]
+  }
+}

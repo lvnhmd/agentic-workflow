@@ -1,0 +1,18 @@
+# Developer-local credentials for the agentic workflow.
+# Copy the lines you need into your project's .env (which must be git-ignored).
+# Never commit real values.
+
+# --- Jira (only when TRACKER=jira) ---
+JIRA_BASE_URL=https://your-org.atlassian.net
+JIRA_EMAIL=you@example.com
+# Create at https://id.atlassian.com/manage-profile/security/api-tokens
+JIRA_API_TOKEN=
+# Your Jira account ID (Profile → the ID in the URL). Used for assignee safety checks.
+JIRA_ACCOUNT_ID=
+# Who QA tickets are assigned to after merge: an account ID, a name or an email.
+QA_ASSIGNEE_QUERY=
+
+# --- CircleCI (only when CI_PROVIDER=circleci) ---
+# Personal API token: CircleCI → User Settings → Personal API Tokens
+CIRCLECI_TOKEN=
+

@@ -1,0 +1,16 @@
+{
+  "name": "agentic-workflow",
+  "owner": {
+    "name": "Connect The Dots Ltd"
+  },
+  "metadata": {
+    "description": "Connect The Dots' agentic development workflow for Claude Code."
+  },
+  "plugins": [
+    {
+      "name": "agentic-workflow",
+      "source": "./plugin",
+      "description": "Ticket-to-PR agentic development workflow: stage commands, subagents, guardrail hooks, tracker and CI adapters."
+    }
+  ]
+}

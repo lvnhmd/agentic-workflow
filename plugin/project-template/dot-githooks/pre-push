@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# pre-push: the last local check before work is shared. Should finish in about a minute.
+# Runs the fast tier of .claude/verify-steps, plus structural checks git can see.
+source "$(git rev-parse --show-toplevel)/scripts/agentic/lib.sh"
+aw_load_config
+cd "$AW_ROOT" || exit 1
+
+echo "=== pre-push ==="
+ZERO_SHA="0000000000000000000000000000000000000000"
+CHANGED=""
+
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+  [ "$local_sha" = "$ZERO_SHA" ] && continue   # branch deletion
+
+  if [[ "$remote_sha" == "$ZERO_SHA" ]] || ! git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null; then
+    RANGE=("$local_sha" --not --remotes)       # new branch or rewritten history
+  else
+    RANGE=("$remote_sha..$local_sha")
+  fi
+
+  # PROGRESS.md must never leave the machine, even if it slipped in with --no-verify.
+  OFFENDING="$(git log --name-only --pretty=format:'%H' "${RANGE[@]}" 2>/dev/null |
+    awk '/^[0-9a-f]{40}$/{h=$0} /^PROGRESS\.md$/{print h; exit}')"
+  if [ -n "$OFFENDING" ]; then
+    echo "BLOCKED: PROGRESS.md is committed in $OFFENDING. Take it out of the branch history, then push."
+    exit 1
+  fi
+
+  CHANGED="$CHANGED"$'\n'"$(git log --name-only --pretty=format: "${RANGE[@]}" 2>/dev/null)"
+done
+CHANGED="$(printf '%s\n' "$CHANGED" | sed '/^$/d' | sort -u)"
+
+if [ -z "$CHANGED" ]; then
+  echo "Nothing new to check."
+  exit 0
+fi
+
+# Schema changes must travel with a migration (Prisma, Drizzle, Django, Rails, Alembic, SQL schema).
+if echo "$CHANGED" | grep -qE '(schema\.prisma$|(^|/)schema\.(sql|ts)$|(^|/)models\.py$|db/schema\.rb$)'; then
+  if ! echo "$CHANGED" | grep -qE '(^|/)(migrations?|alembic/versions|db/migrate)/'; then
+    echo "WARNING: a schema/model file changed with no migration in this push."
+    echo "  If the change affects the database, create and commit the migration first."
+    if echo "$CHANGED" | grep -qE 'schema\.prisma$|schema\.sql$'; then
+      echo "BLOCKED: schema file changed without a migration."
+      exit 1
+    fi
+  fi
+fi
+
+# Docs-only pushes take the light path.
+if ! echo "$CHANGED" | grep -qvE '(^docs/|\.md$|^\.claude/)'; then
+  echo "Docs/agent-config only — skipping the fast verification tier."
+  exit 0
+fi
+
+bash scripts/agentic/verify.sh --fast || { echo "pre-push failed. Fix the failure; do not push with --no-verify."; exit 1; }
+
+if [ -x "$AW_ROOT/.githooks/pre-push.local" ]; then
+  printf '%s\n' "$CHANGED" | "$AW_ROOT/.githooks/pre-push.local" || exit 1
+fi
+echo "=== pre-push passed ==="

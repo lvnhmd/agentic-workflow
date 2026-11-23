@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# pre-commit: cheap, deterministic checks on what's staged. Should finish in seconds.
+# Enabled by: git config core.hooksPath .githooks   (the installer does this for you)
+source "$(git rev-parse --show-toplevel)/scripts/agentic/lib.sh"
+aw_load_config
+
+echo "=== pre-commit ==="
+
+# 1. No direct commits to protected branches.
+BRANCH="$(aw_current_branch)"
+if [[ "$BRANCH" =~ $PROTECTED_BRANCHES ]]; then
+  echo "BLOCKED: '$BRANCH' is protected. Commit on a ticket branch and open a PR instead."
+  exit 1
+fi
+
+# 2. PROGRESS.md is a local-only session scratchpad.
+if git diff --cached --name-only | grep -qx 'PROGRESS.md'; then
+  echo "BLOCKED: PROGRESS.md must never be committed (local session scratchpad)."
+  echo "  Unstage it with: git restore --staged PROGRESS.md"
+  exit 1
+fi
+
+# 3. No real env files.
+if git diff --cached --name-only --diff-filter=AM | grep -E '(^|/)\.env(\.[A-Za-z0-9_-]+)?$' | grep -vE '\.example$' | grep -q .; then
+  echo "BLOCKED: an .env file is staged. Secrets never go into git."
+  exit 1
+fi
+
+# 4. Secret scan on staged changes, with whichever scanner is installed.
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks protect --staged --no-banner --redact || { echo "BLOCKED: gitleaks found a secret."; exit 1; }
+elif [ -x node_modules/.bin/secretlint ]; then
+  git diff --cached --name-only --diff-filter=AM -z | xargs -0 node_modules/.bin/secretlint || { echo "BLOCKED: secretlint found a secret."; exit 1; }
+fi
+
+# 5. Formatting / lint on staged files, if the project uses lint-staged or pre-commit.
+if [ -f package.json ] && grep -q '"lint-staged"' package.json 2>/dev/null || ls lint-staged.config.* .lintstagedrc* >/dev/null 2>&1; then
+  npx --no-install lint-staged || exit 1
+elif [ -f .pre-commit-config.yaml ] && command -v pre-commit >/dev/null 2>&1; then
+  pre-commit run || exit 1
+fi
+
+# 6. Project-specific fast checks (i18n parity, custom guardrails...): .githooks/pre-commit.local
+if [ -x "$AW_ROOT/.githooks/pre-commit.local" ]; then
+  "$AW_ROOT/.githooks/pre-commit.local" || exit 1
+fi
+
+echo "=== pre-commit passed ==="

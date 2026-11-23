@@ -1,0 +1,8 @@
+# Verification steps, run in order by scripts/agentic/verify.sh.
+# Format:  <tier> | <label> | <command>
+#   fast — run on every push (.githooks/pre-push) AND in the full suite
+#   full — run only in the full suite (before every PR, same as CI)
+# The script stops at the first failing step. Keep this list in step with your CI config:
+# verify.sh is meant to be "CI on your laptop".
+{{VERIFY_STEPS}}
+fast | ADR / architecture doc sync | bash scripts/agentic/check-adr-sync.sh

@@ -1,0 +1,369 @@
+#!/usr/bin/env bash
+# aw-tracker — one interface to the ticket tracker, so commands never hard-code Jira or GitHub.
+# Backend is chosen by TRACKER in .claude/workflow.env (jira | github).
+# Every read returns normalised JSON on stdout; errors go to stderr with a non-zero exit.
+#
+#   key <raw>                      Normalise "42", "abc-42", a browse URL... -> "ABC-42" (jira) / "42" (github)
+#   from-branch [branch]           Ticket key derived from a branch name (empty for chore/ branches)
+#   url <key>                      Browse URL for a ticket
+#   get <key>                      {key,title,description,status,type,priority,assignee,labels,parent,epic,subtasks,links,url}
+#   comments <key>                 [{author,created,body,by_agent}] oldest first
+#   me                             Current user's id (Jira accountId / GitHub login)
+#   resolve-user <query>           [{id,name,active}] for an account ID, name or email
+#   assign <key> [user|me]         Assign (default: me)
+#   transition <key> <status>      Move to a status by name (github: status:<slug> label; Done closes)
+#   comment <key> <file>           Post a Markdown comment (attribution appended automatically)
+#   create <Bug|Story|Task> <title> <file>   Create a ticket assigned to me; prints the new key
+#   label <key> <label>            Add a label
+#   epics                          Open epics (jira) / open milestones (github): [{key,title}]
+#   set-parent <key> <epic>        Link to an epic (jira) / set milestone (github)
+#   board-add <key>                Move onto JIRA_BOARD_ID if set (no-op otherwise)
+#   attachments <key> <dir>        Download image attachments; prints the local paths
+set -euo pipefail
+# shellcheck source=../lib/lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/lib.sh"
+aw_load_config
+aw_need_cmd jq curl
+
+ATTR_TEXT="$(printf '%s' "$ATTRIBUTION" | tr -d '_*')"
+
+with_attribution() {
+  # Append ATTRIBUTION unless the text already carries it.
+  local body
+  body="$(cat "$1")"
+  if ! grep -qF "$ATTR_TEXT" <<<"$body"; then
+    body="$body"$'\n\n'"$ATTRIBUTION"
+  fi
+  printf '%s' "$body"
+}
+
+# ---------------------------------------------------------------------------- Jira
+jira_init() { aw_require JIRA_BASE_URL JIRA_EMAIL JIRA_API_TOKEN; JIRA_BASE_URL="${JIRA_BASE_URL%/}"; }
+
+# jira_api METHOD PATH [JSON-BODY]
+jira_api() {
+  local method="$1" path="$2" body="${3:-}" out code
+  out="$(mktemp)"
+  if [ -n "$body" ]; then
+    code="$(curl -sS -o "$out" -w '%{http_code}' -u "$JIRA_EMAIL:$JIRA_API_TOKEN" -X "$method" \
+      -H 'Accept: application/json' -H 'Content-Type: application/json' \
+      --data-binary "$body" "$JIRA_BASE_URL$path")"
+  else
+    code="$(curl -sS -o "$out" -w '%{http_code}' -u "$JIRA_EMAIL:$JIRA_API_TOKEN" -X "$method" \
+      -H 'Accept: application/json' "$JIRA_BASE_URL$path")"
+  fi
+  if [[ "$code" != 2* ]]; then
+    echo "Jira $method $path failed (HTTP $code):" >&2
+    cat "$out" >&2; echo >&2
+    rm -f "$out"; return 1
+  fi
+  cat "$out"; rm -f "$out"
+}
+
+# Minimal Markdown -> Jira wiki markup (headings, bullets, numbered lists, bold, code, links).
+md_to_wiki() {
+  sed -E \
+    -e 's/^### (.*)$/h3. \1/' -e 's/^## (.*)$/h2. \1/' -e 's/^# (.*)$/h1. \1/' \
+    -e 's/^    [-*] /*** /' -e 's/^  [-*] /** /' -e 's/^[-*] /* /' \
+    -e 's/^[0-9]+\. /# /' \
+    -e 's/^```.*$/{code}/' \
+    -e 's/\*\*([^*]+)\*\*/*\1*/g' \
+    -e 's/`([^`]+)`/{{\1}}/g' \
+    -e 's/\[([^]]+)\]\(([^)]+)\)/[\1|\2]/g'
+}
+
+jira_key() {
+  local raw="$1"
+  raw="${raw##*/browse/}"; raw="${raw%%[?#]*}"
+  if [[ "$raw" =~ ^[0-9]+$ ]]; then
+    aw_require TICKET_PREFIX
+    echo "${TICKET_PREFIX}-${raw}"
+  else
+    echo "$raw" | tr '[:lower:]' '[:upper:]'
+  fi
+}
+
+jira_from_branch() {
+  local b="$1"
+  [[ "$b" == chore/* ]] && return 0
+  if [ -n "${TICKET_PREFIX:-}" ]; then
+    # (bash 3.2 compatible — macOS ships it — so no ${var^^})
+    local prefix_uc
+    prefix_uc="$(printf '%s' "$TICKET_PREFIX" | tr '[:lower:]' '[:upper:]')"
+    echo "$b" | grep -ioE "(^|/)${TICKET_PREFIX}-?[0-9]+" | head -1 | sed -E 's#^/##' |
+      tr '[:lower:]' '[:upper:]' | sed -E "s/^(${prefix_uc})-?([0-9]+)$/\1-\2/" || true
+  else
+    echo "$b" | grep -oE '(^|/)[A-Za-z]+-[0-9]+' | head -1 | sed -E 's#^/##' | tr '[:lower:]' '[:upper:]' || true
+  fi
+}
+
+jira_get() {
+  local key="$1"
+  jira_api GET "/rest/api/2/issue/$key?fields=summary,description,status,issuetype,priority,assignee,labels,parent,subtasks,issuelinks,customfield_10014" |
+    jq --arg url "$JIRA_BASE_URL/browse/$key" '{
+      key, url: $url,
+      title: .fields.summary,
+      description: (.fields.description // ""),
+      status: .fields.status.name,
+      type: .fields.issuetype.name,
+      priority: (.fields.priority.name // null),
+      assignee: (if .fields.assignee then {id: .fields.assignee.accountId, name: .fields.assignee.displayName} else null end),
+      labels: (.fields.labels // []),
+      parent: (if .fields.parent then {key: .fields.parent.key, title: .fields.parent.fields.summary, type: .fields.parent.fields.issuetype.name} else null end),
+      epic: (.fields.customfield_10014 // null),
+      subtasks: [(.fields.subtasks // [])[] | {key, title: .fields.summary, status: .fields.status.name}],
+      links: [(.fields.issuelinks // [])[] | (if .outwardIssue then {type: .type.outward, key: .outwardIssue.key, title: .outwardIssue.fields.summary} else {type: .type.inward, key: .inwardIssue.key, title: .inwardIssue.fields.summary} end)]
+    }'
+}
+
+jira_comments() {
+  local key="$1" start=0 total=1 page all='[]'
+  while [ "$start" -lt "$total" ]; do
+    page="$(jira_api GET "/rest/api/2/issue/$key/comment?orderBy=created&startAt=$start&maxResults=100")"
+    total="$(jq '.total' <<<"$page")"
+    all="$(jq -s '.[0] + .[1].comments' <(echo "$all") <(echo "$page"))"
+    start=$((start + 100))
+  done
+  jq --arg attr "$ATTR_TEXT" '[.[] | {author: .author.displayName, created, body, by_agent: ((.body // "") | contains($attr))}]' <<<"$all"
+}
+
+jira_me() {
+  if [ -n "${JIRA_ACCOUNT_ID:-}" ]; then echo "$JIRA_ACCOUNT_ID"; return; fi
+  jira_api GET /rest/api/2/myself | jq -r .accountId
+}
+
+jira_resolve_user() {
+  local q="$1"
+  if [[ "$q" == *:* || "$q" =~ ^[0-9a-fA-F]{24}$ ]]; then
+    jira_api GET "/rest/api/2/user?accountId=$(jq -rn --arg q "$q" '$q|@uri')" |
+      jq '[{id: .accountId, name: .displayName, active}]'
+  else
+    jira_api GET "/rest/api/2/user/search?query=$(jq -rn --arg q "$q" '$q|@uri')" |
+      jq '[.[] | {id: .accountId, name: .displayName, active}]'
+  fi
+}
+
+jira_assign() {
+  local key="$1" who="${2:-me}"
+  [ "$who" = "me" ] && who="$(jira_me)"
+  jira_api PUT "/rest/api/2/issue/$key/assignee" "$(jq -nc --arg a "$who" '{accountId: $a}')" >/dev/null
+  echo "assigned $key to $who"
+}
+
+jira_transition() {
+  local key="$1" status="$2" id
+  id="$(jira_api GET "/rest/api/2/issue/$key/transitions" |
+    jq -r --arg s "$status" '[.transitions[] | select((.name|ascii_downcase) == ($s|ascii_downcase) or (.to.name|ascii_downcase) == ($s|ascii_downcase))][0].id // empty')"
+  if [ -z "$id" ]; then
+    echo "No transition to \"$status\" is available from the current status of $key. Available:" >&2
+    jira_api GET "/rest/api/2/issue/$key/transitions" | jq -r '.transitions[] | "  - \(.name) -> \(.to.name)"' >&2
+    return 1
+  fi
+  jira_api POST "/rest/api/2/issue/$key/transitions" "$(jq -nc --arg id "$id" '{transition: {id: $id}}')" >/dev/null
+  echo "moved $key to $status"
+}
+
+jira_comment() {
+  local key="$1" file="$2" wiki
+  wiki="$(with_attribution "$file" | md_to_wiki)"
+  jira_api POST "/rest/api/2/issue/$key/comment" "$(jq -nc --arg b "$wiki" '{body: $b}')" | jq -r '"comment \(.id) posted"'
+}
+
+jira_create() {
+  local type="$1" title="$2" file="$3" wiki me key
+  aw_require TICKET_PREFIX
+  wiki="$(with_attribution "$file" | md_to_wiki)"
+  me="$(jira_me)"
+  key="$(jira_api POST /rest/api/2/issue "$(jq -nc --arg p "$TICKET_PREFIX" --arg t "$type" --arg s "$title" --arg d "$wiki" --arg me "$me" \
+    '{fields: {project: {key: $p}, issuetype: {name: $t}, summary: $s, description: $d, assignee: {accountId: $me}}}')" | jq -r .key)"
+  echo "$key"
+}
+
+jira_label() {
+  local key="$1" label="$2"
+  jira_api PUT "/rest/api/2/issue/$key" "$(jq -nc --arg l "$label" '{update: {labels: [{add: $l}]}}')" >/dev/null
+  echo "labelled $key with $label"
+}
+
+jira_epics() {
+  aw_require TICKET_PREFIX
+  local jql
+  jql="$(jq -rn --arg p "$TICKET_PREFIX" '"project = \($p) AND issuetype = Epic AND statusCategory != Done ORDER BY created DESC" | @uri')"
+  jira_api GET "/rest/api/3/search/jql?jql=$jql&fields=summary,status&maxResults=100" |
+    jq '[.issues[] | {key, title: .fields.summary, status: .fields.status.name}]'
+}
+
+jira_set_parent() {
+  local key="$1" epic="$2"
+  jira_api PUT "/rest/api/2/issue/$key" "$(jq -nc --arg e "$epic" '{fields: {parent: {key: $e}}}')" >/dev/null
+  echo "linked $key to epic $epic"
+}
+
+jira_board_add() {
+  local key="$1"
+  if [ -z "${JIRA_BOARD_ID:-}" ]; then echo "JIRA_BOARD_ID not set — skipped"; return 0; fi
+  jira_api POST "/rest/agile/1.0/board/$JIRA_BOARD_ID/issue" "$(jq -nc --arg k "$key" '{issues: [$k]}')" >/dev/null
+  echo "moved $key onto board $JIRA_BOARD_ID"
+}
+
+jira_attachments() {
+  local key="$1" dir="$2"
+  mkdir -p "$dir"
+  jira_api GET "/rest/api/2/issue/$key?fields=attachment" |
+    jq -r '.fields.attachment[]? | select(.mimeType | startswith("image/")) | "\(.id)\t\(.filename)\t\(.content)"' |
+    while IFS=$'\t' read -r id name url; do
+      curl -sS -L -u "$JIRA_EMAIL:$JIRA_API_TOKEN" -o "$dir/$id-$name" "$url" && echo "$dir/$id-$name"
+    done
+}
+
+# -------------------------------------------------------------------------- GitHub
+gh_init() { aw_need_cmd gh; aw_require REPO_SLUG; }
+
+gh_key() {
+  local raw="$1"
+  raw="${raw##*/issues/}"; raw="${raw#\#}"; raw="${raw%%[?#/]*}"
+  [[ "$raw" =~ ^[0-9]+$ ]] || aw_die "'$1' is not a GitHub issue number"
+  echo "$raw"
+}
+
+gh_from_branch() {
+  local b="$1"
+  [[ "$b" == chore/* ]] && return 0
+  echo "$b" | sed -nE 's#^([^/]+/)?(gh-|issue-)?([0-9]+)([-_/].*)?$#\3#p'
+}
+
+# All GitHub calls use the REST API: `gh issue ...` subcommands go through GraphQL, which some
+# environments (e.g. Claude Code on the web) block.
+gh_issue() { gh api "repos/$REPO_SLUG/issues/$1"; }
+
+gh_get() {
+  gh_issue "$1" |
+    jq '{
+      key: (.number|tostring), url: .html_url, title,
+      description: (.body // ""),
+      status: ((.labels | map(.name | select(startswith("status:")) | sub("^status:"; "")) | first) // .state),
+      type: ((.labels | map(.name) | map(select(. == "bug" or . == "story" or . == "task" or . == "enhancement")) | first) // (if .pull_request then "pull request" else "issue" end)),
+      priority: null,
+      assignee: (if (.assignees|length) > 0 then {id: .assignees[0].login, name: .assignees[0].login} else null end),
+      labels: [.labels[].name],
+      parent: (if .milestone then {key: (.milestone.number|tostring), title: .milestone.title, type: "Milestone"} else null end),
+      epic: (.milestone.title // null),
+      subtasks: [], links: []
+    }'
+}
+
+gh_comments() {
+  gh api "repos/$REPO_SLUG/issues/$1/comments" --paginate |
+    jq -s --arg attr "$ATTR_TEXT" '[.[][] | {author: .user.login, created: .created_at, body, by_agent: ((.body // "") | contains($attr))}]'
+}
+
+gh_me() { gh api user --jq .login; }
+
+gh_resolve_user() { gh api "users/$1" --jq '[{id: .login, name: (.name // .login), active: true}]'; }
+
+gh_assign() {
+  local who="${2:-me}"
+  [ "$who" = "me" ] && who="$(gh_me)"
+  gh api -X POST "repos/$REPO_SLUG/issues/$1/assignees" -f "assignees[]=$who" >/dev/null
+  echo "assigned #$1 to $who"
+}
+
+gh_ensure_label() {
+  gh api "repos/$REPO_SLUG/labels/$(jq -rn --arg l "$1" '$l|@uri')" >/dev/null 2>&1 ||
+    gh api -X POST "repos/$REPO_SLUG/labels" -f "name=$1" -f "color=${2:-ededed}" >/dev/null 2>&1 || true
+}
+
+gh_add_label() { gh api -X POST "repos/$REPO_SLUG/issues/$1/labels" -f "labels[]=$2" >/dev/null; }
+
+gh_transition() {
+  local key="$1" status="$2" label old issue
+  if [ "$(aw_slug "$status")" = "$(aw_slug "$STATUS_DONE")" ]; then
+    gh api -X PATCH "repos/$REPO_SLUG/issues/$key" -f state=closed >/dev/null
+    echo "closed #$key"; return
+  fi
+  label="status:$(aw_slug "$status")"
+  gh_ensure_label "$label" "0e8a16"
+  issue="$(gh_issue "$key")"
+  for old in $(jq -r '.labels[].name | select(startswith("status:"))' <<<"$issue"); do
+    [ "$old" = "$label" ] || gh api -X DELETE "repos/$REPO_SLUG/issues/$key/labels/$(jq -rn --arg l "$old" '$l|@uri')" >/dev/null
+  done
+  gh_add_label "$key" "$label"
+  if [ "$(jq -r .state <<<"$issue")" = "closed" ]; then
+    gh api -X PATCH "repos/$REPO_SLUG/issues/$key" -f state=open >/dev/null
+  fi
+  echo "moved #$key to $status ($label)"
+}
+
+gh_comment() {
+  local body
+  body="$(with_attribution "$2")"
+  gh api -X POST "repos/$REPO_SLUG/issues/$1/comments" -f "body=$body" >/dev/null
+  echo "comment posted on #$1"
+}
+
+gh_create() {
+  local type label body me
+  type="$(aw_slug "$1")"; label="$type"; [ "$type" = "story" ] && label="enhancement"
+  gh_ensure_label "$label"
+  body="$(with_attribution "$3")"
+  me="$(gh_me)"
+  gh api -X POST "repos/$REPO_SLUG/issues" -f "title=$2" -f "body=$body" -f "labels[]=$label" -f "assignees[]=$me" --jq '.number'
+}
+
+gh_label() { gh_ensure_label "$2"; gh_add_label "$1" "$2"; echo "labelled #$1 with $2"; }
+
+gh_epics() { gh api "repos/$REPO_SLUG/milestones?state=open&per_page=100" --jq '[.[] | {key: (.number|tostring), title, status: .state}]'; }
+
+gh_set_parent() {
+  local m="$2"
+  if ! [[ "$m" =~ ^[0-9]+$ ]]; then
+    m="$(gh api "repos/$REPO_SLUG/milestones?state=all&per_page=100" | jq -r --arg t "$2" '.[] | select(.title == $t) | .number' | head -1)"
+    [ -n "$m" ] || aw_die "no milestone titled '$2'"
+  fi
+  gh api -X PATCH "repos/$REPO_SLUG/issues/$1" -F "milestone=$m" >/dev/null
+  echo "set milestone of #$1 to $2"
+}
+
+gh_attachments() {
+  local key="$1" dir="$2" token i=0
+  mkdir -p "$dir"
+  token="$(gh auth token 2>/dev/null || true)"
+  { gh_issue "$key" | jq -r '.body // ""'; gh api "repos/$REPO_SLUG/issues/$key/comments" --paginate --jq '.[].body // ""'; } |
+    grep -oE '(!\[[^]]*\]\(https?://[^)]+\)|<img[^>]+src="https?://[^"]+")' |
+    sed -E 's/.*\((https?:[^)]+)\).*/\1/; s/.*src="([^"]+)".*/\1/' |
+    while read -r url; do
+      i=$((i + 1))
+      curl -sS -L ${token:+-H "Authorization: token $token"} -o "$dir/$key-$i.png" "$url" && echo "$dir/$key-$i.png"
+    done
+}
+
+# ---------------------------------------------------------------------------- main
+cmd="${1:-}"; shift || true
+case "$TRACKER" in
+  jira) jira_init; p=jira ;;
+  github) gh_init; p=gh ;;
+  *) aw_die "TRACKER must be jira or github (got '$TRACKER')" ;;
+esac
+
+case "$cmd" in
+  key) "${p}_key" "${1:?ticket required}" ;;
+  from-branch) "${p}_from_branch" "${1:-$(aw_current_branch)}" ;;
+  url)
+    k="$("${p}_key" "${1:?ticket required}")"
+    if [ "$p" = jira ]; then echo "$JIRA_BASE_URL/browse/$k"; else echo "https://github.com/$REPO_SLUG/issues/$k"; fi ;;
+  get) "${p}_get" "$("${p}_key" "${1:?ticket required}")" ;;
+  comments) "${p}_comments" "$("${p}_key" "${1:?ticket required}")" ;;
+  me) "${p}_me" ;;
+  resolve-user) "${p}_resolve_user" "${1:?query required}" ;;
+  assign) "${p}_assign" "$("${p}_key" "${1:?ticket required}")" "${2:-me}" ;;
+  transition) "${p}_transition" "$("${p}_key" "${1:?ticket required}")" "${2:?status required}" ;;
+  comment) [ -f "${2:-}" ] || aw_die "usage: comment <key> <markdown-file>"; "${p}_comment" "$("${p}_key" "$1")" "$2" ;;
+  create) [ -f "${3:-}" ] || aw_die "usage: create <Bug|Story|Task> <title> <markdown-file>"; "${p}_create" "$1" "$2" "$3" ;;
+  label) "${p}_label" "$("${p}_key" "${1:?ticket required}")" "${2:?label required}" ;;
+  epics) "${p}_epics" ;;
+  set-parent) "${p}_set_parent" "$("${p}_key" "${1:?ticket required}")" "${2:?epic required}" ;;
+  board-add) if [ "$p" = jira ]; then jira_board_add "$(jira_key "${1:?ticket required}")"; else echo "no board for github — skipped"; fi ;;
+  attachments) "${p}_attachments" "$("${p}_key" "${1:?ticket required}")" "${2:?directory required}" ;;
+  ""|-h|--help|help) sed -n '2,24p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
+  *) aw_die "unknown command '$cmd' (run with --help)" ;;
+esac

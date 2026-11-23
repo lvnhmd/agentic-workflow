@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+# aw-ci — one interface to CI, so commands never hard-code GitHub Actions or CircleCI.
+# Backend is chosen by CI_PROVIDER in .claude/workflow.env (github | circleci | none).
+# Scoped to this repository only (REPO_SLUG): it never reads or triggers another project.
+#
+#   status [branch]       Latest CI run(s) for the branch's head commit, with failed jobs:
+#                         [{id,name,status,conclusion,url,sha,failed_jobs:[{id,name,url}]}]
+#   logs <job-id>         Log output of a failed job (GitHub: job id; CircleCI: job number)
+#   rerun <run-id>        Re-run only the failed jobs (GitHub: run id; CircleCI: workflow id)
+#   scheduled [days=7]    Scheduled (nightly) runs in the last N days:
+#                         [{id,name,created,status,conclusion,url}]
+set -euo pipefail
+# shellcheck source=../lib/lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/lib.sh"
+aw_load_config
+aw_need_cmd jq
+
+# --------------------------------------------------------------- GitHub Actions
+gha_status() {
+  local branch="$1" runs sha
+  runs="$(gh run list --repo "$REPO_SLUG" --branch "$branch" --limit 30 \
+    --json databaseId,workflowName,status,conclusion,url,headSha,createdAt)"
+  sha="$(jq -r '.[0].headSha // empty' <<<"$runs")"
+  [ -n "$sha" ] || { echo '[]'; return; }
+  jq -c --arg sha "$sha" '.[] | select(.headSha == $sha)' <<<"$runs" | while read -r run; do
+    local id jobs
+    id="$(jq -r .databaseId <<<"$run")"
+    jobs="$(gh run view "$id" --repo "$REPO_SLUG" --json jobs \
+      --jq '[.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "cancelled") | {id: (.databaseId|tostring), name, url}]')"
+    jq --argjson jobs "$jobs" '{id: (.databaseId|tostring), name: .workflowName, status, conclusion, url, sha: .headSha, failed_jobs: $jobs}' <<<"$run"
+  done | jq -s .
+}
+
+gha_logs() { gh run view --repo "$REPO_SLUG" --job "$1" --log-failed; }
+
+gha_rerun() { gh run rerun "$1" --repo "$REPO_SLUG" --failed && echo "re-running failed jobs of run $1"; }
+
+gha_scheduled() {
+  local days="$1" since
+  since="$(jq -rn --argjson d "$days" '(now - $d*86400) | strftime("%Y-%m-%d")')"
+  gh run list --repo "$REPO_SLUG" --event schedule --created ">=$since" --limit 100 \
+    --json databaseId,workflowName,createdAt,status,conclusion,url |
+    jq '[.[] | {id: (.databaseId|tostring), name: .workflowName, created: .createdAt, status, conclusion, url}]'
+}
+
+# --------------------------------------------------------------------- CircleCI
+cci_init() {
+  aw_require CIRCLECI_TOKEN
+  CCI_SLUG="${CIRCLECI_PROJECT_SLUG:-gh/$REPO_SLUG}"
+}
+
+cci_api() {
+  local method="$1" path="$2" body="${3:-}" out code
+  out="$(mktemp)"
+  code="$(curl -sS -o "$out" -w '%{http_code}' -X "$method" -H "Circle-Token: $CIRCLECI_TOKEN" \
+    -H 'Content-Type: application/json' ${body:+--data-binary "$body"} "https://circleci.com/api$path")"
+  if [[ "$code" != 2* ]]; then
+    echo "CircleCI $method $path failed (HTTP $code):" >&2; cat "$out" >&2; echo >&2
+    rm -f "$out"; return 1
+  fi
+  cat "$out"; rm -f "$out"
+}
+
+cci_status() {
+  local branch="$1" pipeline pid sha
+  pipeline="$(cci_api GET "/v2/project/$CCI_SLUG/pipeline?branch=$(jq -rn --arg b "$branch" '$b|@uri')" | jq '.items[0] // empty')"
+  [ -n "$pipeline" ] || { echo '[]'; return; }
+  pid="$(jq -r .id <<<"$pipeline")"
+  sha="$(jq -r '.vcs.revision // ""' <<<"$pipeline")"
+  cci_api GET "/v2/pipeline/$pid/workflow" | jq -c '.items[]' | while read -r wf; do
+    local wid jobs
+    wid="$(jq -r .id <<<"$wf")"
+    jobs="$(cci_api GET "/v2/workflow/$wid/job" |
+      jq --arg slug "$CCI_SLUG" '[.items[] | select(.status == "failed" or .status == "infrastructure_fail" or .status == "timedout") |
+        {id: (.job_number|tostring), name, url: "https://app.circleci.com/jobs/\($slug)/\(.job_number)"}]')"
+    jq --argjson jobs "$jobs" --arg sha "$sha" --arg slug "$CCI_SLUG" --argjson n "$(jq .number <<<"$pipeline")" \
+      '{id, name, status, conclusion: .status, url: "https://app.circleci.com/pipelines/\($slug)/\($n)/workflows/\(.id)", sha: $sha, failed_jobs: $jobs}' <<<"$wf"
+  done | jq -s .
+}
+
+cci_logs() {
+  local job="$1"
+  cci_api GET "/v1.1/project/$CCI_SLUG/$job" |
+    jq -r '.steps[].actions[] | select(.failed == true or .status == "failed") | "\(.name)\t\(.output_url // "")"' |
+    while IFS=$'\t' read -r name url; do
+      echo "===== step: $name ====="
+      [ -n "$url" ] && curl -sS --compressed "$url" | jq -r '.[].message'
+    done
+}
+
+cci_rerun() {
+  cci_api POST "/v2/workflow/$1/rerun" '{"from_failed": true}' >/dev/null
+  echo "re-running failed jobs of workflow $1"
+}
+
+cci_scheduled() {
+  local days="$1" since
+  since="$(jq -rn --argjson d "$days" '(now - $d*86400) | todate')"
+  cci_api GET "/v2/project/$CCI_SLUG/pipeline" |
+    jq -c --arg since "$since" '.items[] | select(.trigger.type == "scheduled_pipeline" or .trigger.type == "schedule") | select(.created_at >= $since)' |
+    while read -r p; do
+      local pid n created
+      pid="$(jq -r .id <<<"$p")"; n="$(jq -r .number <<<"$p")"; created="$(jq -r .created_at <<<"$p")"
+      cci_api GET "/v2/pipeline/$pid/workflow" |
+        jq -c --arg c "$created" --arg slug "$CCI_SLUG" --arg n "$n" \
+          '.items[] | {id, name, created: $c, status, conclusion: .status, url: "https://app.circleci.com/pipelines/\($slug)/\($n)/workflows/\(.id)"}'
+    done | jq -s .
+}
+
+# ------------------------------------------------------------------------- main
+cmd="${1:-}"; shift || true
+case "$CI_PROVIDER" in
+  github) aw_need_cmd gh; aw_require REPO_SLUG; p=gha ;;
+  circleci) aw_need_cmd curl; aw_require REPO_SLUG; cci_init; p=cci ;;
+  none) echo "CI_PROVIDER=none — no CI adapter configured in .claude/workflow.env" >&2; exit 3 ;;
+  *) aw_die "CI_PROVIDER must be github, circleci or none (got '$CI_PROVIDER')" ;;
+esac
+
+case "$cmd" in
+  status) "${p}_status" "${1:-$(aw_current_branch)}" ;;
+  logs) "${p}_logs" "${1:?job id required}" ;;
+  rerun) "${p}_rerun" "${1:?run/workflow id required}" ;;
+  scheduled) "${p}_scheduled" "${1:-7}" ;;
+  ""|-h|--help|help) sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
+  *) aw_die "unknown command '$cmd' (run with --help)" ;;
+esac
