@@ -13,10 +13,10 @@ if [[ "$BRANCH" =~ $PROTECTED_BRANCHES ]]; then
   exit 1
 fi
 
-# 2. PROGRESS.md is a local-only session scratchpad.
-if git diff --cached --name-only | grep -qx 'PROGRESS.md'; then
-  echo "BLOCKED: PROGRESS.md must never be committed (local session scratchpad)."
-  echo "  Unstage it with: git restore --staged PROGRESS.md"
+# 2. SESSION.md is a local-only session scratchpad.
+if git diff --cached --name-only | grep -qx 'SESSION.md'; then
+  echo "BLOCKED: SESSION.md must never be committed (local session scratchpad)."
+  echo "  Unstage it with: git restore --staged SESSION.md"
   exit 1
 fi
 

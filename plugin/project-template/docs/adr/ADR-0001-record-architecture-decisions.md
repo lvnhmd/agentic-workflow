@@ -1,4 +1,4 @@
-# ADR-0001: Record architecture decisions
+# ADR-0001: Keep a log of architecture decisions
 
 **Status:** Accepted
 **Date:** {{TODAY}}

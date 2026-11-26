@@ -11,8 +11,8 @@ Config values come from `aw-config <KEY>` (e.g. `aw-config DEFAULT_BRANCH`); `aw
 
 ## 1. Clean up session artefacts
 
-- If `PROGRESS.md` exists: read it back, list the docs it says need updating and update them now, then
-  delete it (`git rm --cached PROGRESS.md 2>/dev/null; rm PROGRESS.md`). The pre-push hook blocks while it is in history.
+- If `SESSION.md` exists: read it back, list the docs it says need updating and update them now, then
+  delete it (`git rm --cached SESSION.md 2>/dev/null; rm SESSION.md`). The pre-push hook blocks while it is in history.
 - Delete untracked screenshots in the repo root left over from verification:
   `git ls-files --others --exclude-standard -- '*.png' '*.jpg' '*.jpeg' '*.gif' '*.webp' | grep -v / | while read -r f; do rm -f "$f"; done`
 
@@ -36,7 +36,7 @@ Config values come from `aw-config <KEY>` (e.g. `aw-config DEFAULT_BRANCH`); `aw
 - **Stacked PR** (base is not the default branch): put this at the very top of the body:
 
   ```
-  ⚠️ Stacked PR — depends on #<parent> (<KEY>: <title>). The diff shows only this PR's changes, so it can be reviewed now. **Do not merge** until #<parent> merges; then retarget this PR to <default branch>.
+  ⚠️ Built on top of #<parent> (<KEY>: <title>). The diff shows only this PR's changes, so it can be reviewed now. **Do not merge** until #<parent> merges; then retarget this PR to <default branch>.
 
   ---
   ```
@@ -86,7 +86,7 @@ Skip it for pure refactors, chores, or when the PR says everything already.
 
 ## 8. Offer to watch for reviews
 
-With `--watch`, don't ask; otherwise ask: "Shall I watch for reviews and run `/pr-action-review <n>`
+With `--watch`, don't ask; otherwise ask: "Shall I watch for reviews and run `/address-review <n>`
 once one arrives? I'll check every 2 minutes."
 
 If yes, poll (ScheduleWakeup or /loop, 120 s) with a self-contained prompt that counts:
@@ -99,7 +99,7 @@ gh api "repos/$(aw-config REPO_SLUG)/issues/<n>/comments" --paginate | jq -s --a
   '[.[][] | select(.user.type != "Bot") | select(.body | contains($a) | not)] | length'
 ```
 
-When either is non-zero, run `/pr-action-review <n>` and **stop watching** — that command re-requests
+When either is non-zero, run `/address-review <n>` and **stop watching** — that command re-requests
 review, and watching on would loop forever. Otherwise check again in 120 s.
 
-If any step fails, stop and explain. Never force or skip a gate.
+A failed step ends the run: report what failed and why. Gates are never forced or skipped.

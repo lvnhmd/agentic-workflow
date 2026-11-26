@@ -1,9 +1,9 @@
 {
   "name": "agentic-workflow",
   "version": "0.2.0",
-  "description": "Ticket-to-PR agentic development workflow for Claude Code: slash commands for each stage (refine, pickup, pr, review, QA, CI fixes), subagents, deterministic guardrail hooks, and Jira/GitHub/CircleCI adapters.",
+  "description": "Ticket-to-PR agentic development workflow for Claude Code: slash commands for each stage (refine, start, pr, review, QA, CI fixes), subagents, deterministic guardrail hooks, and Jira/GitHub/CircleCI adapters.",
   "author": {
-    "name": "Connect The Dots Ltd"
+    "name": "Elvin Ali"
   },
   "license": "MIT",
   "keywords": [

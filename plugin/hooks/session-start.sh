@@ -46,10 +46,10 @@ brief="$brief"$'\n'"Before any ticket, code, PR or review work, load the workflo
 - No feature/fix work without a ticket; branch per ticket; never commit to protected branches or bypass hooks (--no-verify).
 - Docs lead, code follows: read CLAUDE.md's required context first; flag any deviation; update docs in the same PR.
 - Test first. Run scripts/agentic/verify.sh before every PR.
-- PROGRESS.md is a local scratchpad: never commit it.
+- SESSION.md is a local scratchpad: never commit it.
 - Schema changes ship with a migration; applied migrations and accepted ADRs are immutable.
 - Check a ticket's assignee before updating it; end everything you post externally with: $ATTRIBUTION
 - No secrets in code, logs or git; never print .env.
-Helpers on PATH: aw-tracker (tickets), aw-ci (CI runs/logs), aw-config <KEY>, aw-doctor. Commands: /refine /pickup /capture /pr /review /pr-action-review /fix-ci /qa-review-action /morning (also as /agentic-workflow:<name>). Agents: agentic-workflow:worker, :advisor, :adversary, :tdd-critic."
+Helpers on PATH: aw-tracker (tickets), aw-ci (CI runs/logs), aw-config <KEY>, aw-doctor. Commands: /refine /start /capture /pr /review /address-review /fix-ci /qa-feedback /morning (also as /agentic-workflow:<name>). Agents: agentic-workflow:worker, :advisor, :adversary, :tdd-critic."
 
 emit "$brief"

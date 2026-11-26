@@ -29,9 +29,9 @@ Open the files for every area a task touches before changing anything. Don't rel
 | Always                       | `CLAUDE.md`, `CONTRIBUTING.md`                                         |
 | Architecture / design        | `docs/architecture/` (current state) — see ADR reading policy          |
 | Security-sensitive changes   | `docs/architecture/attack-surface.md`                                  |
-| Engineering patterns         | `docs/development/engineering-standards.md`                            |
-| Quality / testing            | `docs/development/quality-strategy.md`                                 |
-| Feature work                 | The ticket (`aw-tracker get <key>`) and its comments                   |
+| How we write code            | `docs/development/engineering-standards.md`                            |
+| Tests and quality bar        | `docs/development/quality-strategy.md`                                 |
+| The task in hand             | The ticket (`aw-tracker get <key>`) and its comments                   |
 | <!-- add rows: frontend conventions, API patterns, i18n, infra... --> |                                                     |
 
 A task that crosses areas means reading each area's files. Unsure whether a file matters? Read it.

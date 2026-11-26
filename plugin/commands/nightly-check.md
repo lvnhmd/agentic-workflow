@@ -12,7 +12,7 @@ aw-ci scheduled ${ARGUMENTS:-7}
 ```
 
 Exit code 3 = no CI adapter: say so and stop. If every run passed: "✅ All scheduled runs passing —
-nothing to action." and stop.
+no failures to look at." and stop.
 
 ## 2. Diagnose each failure
 
@@ -28,13 +28,13 @@ logs with `aw-ci logs <job-id>`. Categorise:
 ## 3. Summarise
 
 ```
-| Run | Date | Workflow | Job | Category | Root cause (one line) |
+| Run | Date | Workflow | Failing job | Type | Why it failed (one line) |
 ```
 
 ## 4. Act
 
 - **Regression / Config** → name the affected files or config, propose a concrete fix, and ask:
-  "Create a ticket and pick it up for <failure>?" If yes: `/capture`, then `/pickup <key>`.
+  "Create a ticket and pick it up for <failure>?" If yes: `/capture`, then `/start <key>`.
 - **Flake** → more than twice in the window means chronic: propose a fix and offer a ticket. Otherwise
   record it as a known flake.
 - **Infra** → flag it for a human with the run and job IDs; it isn't fixable from code.

@@ -109,8 +109,8 @@ if [ -f "$AW_ROOT/.claude/workflow.env" ]; then
   if git check-ignore -q "$AW_ROOT/.env" 2>/dev/null; then record ok ".env ignored"
   else record fail ".env ignored" ".env is not git-ignored — add it to .gitignore"; fi
 
-  if git ls-files --error-unmatch PROGRESS.md >/dev/null 2>&1; then
-    record fail "PROGRESS.md" "is tracked by git — git rm --cached PROGRESS.md"
+  if git ls-files --error-unmatch SESSION.md >/dev/null 2>&1; then
+    record fail "SESSION.md" "is tracked by git — git rm --cached SESSION.md"
   fi
 
   if [ -f "$AW_ROOT/CLAUDE.md" ]; then

@@ -18,11 +18,11 @@ while read -r _local_ref local_sha _remote_ref remote_sha; do
     RANGE=("$remote_sha..$local_sha")
   fi
 
-  # PROGRESS.md must never leave the machine, even if it slipped in with --no-verify.
+  # SESSION.md must never leave the machine, even if it slipped in with --no-verify.
   OFFENDING="$(git log --name-only --pretty=format:'%H' "${RANGE[@]}" 2>/dev/null |
-    awk '/^[0-9a-f]{40}$/{h=$0} /^PROGRESS\.md$/{print h; exit}')"
+    awk '/^[0-9a-f]{40}$/{h=$0} /^SESSION\.md$/{print h; exit}')"
   if [ -n "$OFFENDING" ]; then
-    echo "BLOCKED: PROGRESS.md is committed in $OFFENDING. Take it out of the branch history, then push."
+    echo "BLOCKED: SESSION.md is committed in $OFFENDING. Take it out of the branch history, then push."
     exit 1
   fi
 

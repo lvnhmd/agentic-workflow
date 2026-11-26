@@ -2,8 +2,8 @@
 
 Runs software work from ticket to merged PR in Claude Code, inside deterministic guardrails.
 
-- **Commands** for every stage: `/refine`, `/pickup`, `/capture`, `/push`, `/pr`, `/pr-chore`, `/review`,
-  `/pr-action-review`, `/fix-ci`, `/qa-review-action`, `/nightly-check`, `/dependabot-review`, `/morning`,
+- **Commands** for every stage: `/refine`, `/start`, `/capture`, `/push`, `/pr`, `/ship-chore`, `/review`,
+  `/address-review`, `/fix-ci`, `/qa-feedback`, `/nightly-check`, `/dependabot-review`, `/morning`,
   `/main`, plus `/init` to set a repository up and `/doctor` to check the setup.
 - **Agents**: `worker` (cheap grunt work), `advisor` (read-only second opinion), `adversary` (security
   adversary that leaves failing tests), `tdd-critic` (pokes holes in tests).

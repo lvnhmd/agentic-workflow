@@ -10,12 +10,12 @@ No single layer is relied on alone. Each catches different mistakes:
 | Layer                  | When                 | What it catches                                                 | Where it's configured                     |
 | ---------------------- | -------------------- | --------------------------------------------------------------- | ----------------------------------------- |
 | Claude Code hooks      | every tool call      | destructive commands, edits to immutable files, unformatted code | agentic-workflow plugin (`hooks/`)  |
-| pre-commit             | `git commit` (~10 s) | protected branches, PROGRESS.md, `.env`, secrets, staged lint    | `.githooks/pre-commit` (+ `.local`)        |
+| pre-commit             | `git commit` (~10 s) | protected branches, SESSION.md, `.env`, secrets, staged lint    | `.githooks/pre-commit` (+ `.local`)        |
 | pre-push               | `git push` (< 1 min) | fast tier: format, lint, types, unit tests; schema w/o migration | `.githooks/pre-push`, `.claude/verify-steps` |
 | verify.sh              | before every PR      | the full suite, same as CI                                      | `.claude/verify-steps`                    |
 | CI                     | every push           | everything above on a clean machine, plus scans and e2e         | <!-- your CI config path -->              |
 | AI review              | every PR             | intent vs ticket, security, accessibility, docs sync            | `CLAUDE.md` § PR Review Standards         |
-| Human review / QA      | before merge / after | product intent, risk, things no test encodes                    | CODEOWNERS, `/qa-review-action`           |
+| Human review / QA      | before merge / after | product intent, risk, things no test encodes                    | CODEOWNERS, `/qa-feedback`           |
 | Production             | always               | observability, alerting, runbooks                               | `docs/runbooks/`                          |
 
 When a defect slips through, add a check to the earliest layer that could have caught it.
@@ -35,7 +35,7 @@ When a defect slips through, add a check to the earliest layer that could have c
 
 ## Testing layers
 
-| Layer       | Scope                                               | Runs                     | Coverage floor <!-- PROJECT --> |
+| Test level  | What it covers                                      | When it runs             | Coverage floor <!-- PROJECT --> |
 | ----------- | --------------------------------------------------- | ------------------------ | ------------------------------- |
 | Unit        | one function/module, collaborators mocked           | pre-push, CI             | 70% (raise for critical code)   |
 | Integration | a real boundary (HTTP, DB, queue) with edges mocked | verify.sh, CI            | new endpoints add tests         |

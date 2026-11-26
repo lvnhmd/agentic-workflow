@@ -1,6 +1,6 @@
 ---
 name: review-standards
-description: The project's PR review standard — conversation-history check, review lenses, 🔴/🟡/🔵 classification, verdict rules, comment format and the formal GitHub review. Load it before reviewing any PR, including self-review in /pr and /pr-chore, and when actioning review comments.
+description: The project's PR review standard — conversation-history check, review lenses, 🔴/🟡/🔵 classification, verdict rules, comment format and the formal GitHub review. Load it before reviewing any PR, including self-review in /pr and /ship-chore, and when actioning review comments.
 ---
 
 # PR Review Standards

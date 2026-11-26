@@ -1,10 +1,10 @@
 {
   "name": "agentic-workflow",
   "owner": {
-    "name": "Connect The Dots Ltd"
+    "name": "Elvin Ali"
   },
   "metadata": {
-    "description": "Connect The Dots' agentic development workflow for Claude Code."
+    "description": "Elvin Ali's agentic development workflow for Claude Code."
   },
   "plugins": [
     {

@@ -92,7 +92,7 @@ For each, numbered:
 **Reply if we accept:** "<draft + the change>"
 ```
 
-Then ask: "For each item: accept / reject / skip — and optionally the reply you want posted."
+Then ask: "For each item: apply, decline or leave for now? Add the wording of any reply you want posted."
 
 ## 7. Apply the decisions
 
@@ -103,8 +103,8 @@ Then ask: "For each item: accept / reject / skip — and optionally the reply yo
 Run `verify.sh` once more, push, and print:
 
 ```
-## Review response summary
-✅ Auto-fixed (N): ...
+## What happened to each comment
+✅ Fixed without asking (N): ...
 ✅ Accepted and fixed (N): ...
 ↩️ Pushed back (N): ...
 ℹ️ Informational — replied and resolved (N): ...
@@ -126,7 +126,7 @@ gh pr view <n> --json mergeable,mergeStateStatus,statusCheckRollup,reviews
   human approval: take it at face value.
 - **Mergeable** = `MERGEABLE`, `mergeStateStatus` `CLEAN` or `HAS_HOOKS`, and no check failing or pending.
 
-If both: ask **Q1** "All checks passed and the PR is approved — merge now?" (skipped with `--watch`) and
+If both: ask **Q1** "Checks are green and the PR has its approval. Merge it?" (skipped with `--watch`) and
 **Q2** "After merging, the ticket should: 1) move to Done, 2) move to QA and be assigned to <QA owner>,
 3) stay as it is?". Resolve the QA owner first: `aw-tracker resolve-user "$(aw-config QA_ASSIGNEE_QUERY)"`
 and name the person; if it's unset or ambiguous, say so and ask who.

@@ -49,7 +49,7 @@ For each point:
 ```
 ### [N] — <one-line summary>
 **Source:** <author>, <date>   **Screenshot:** <file — what it shows, or "none">
-**Verdict:** GENUINE BUG | WORKS AS DESIGNED | OUT OF SCOPE | UNCERTAIN
+**Call:** REAL DEFECT | BEHAVES AS SPECIFIED | NOT IN THIS TICKET | NEEDS A HUMAN
 **Reasoning:** <with the cited doc/AC>
 **Proposed action:** <fix details / draft push-back / follow-up ticket summary / both options + recommendation>
 ```

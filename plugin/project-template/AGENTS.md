@@ -10,5 +10,5 @@ The short version:
 - Work from a ticket; branch per ticket (`CONTRIBUTING.md`); never commit to protected branches.
 - Read `docs/architecture/` before designing; docs lead and code follows.
 - Test first. Run `scripts/agentic/verify.sh` before opening a PR. Never bypass git hooks.
-- `PROGRESS.md` is a local scratchpad: never commit it.
+- `SESSION.md` is a local scratchpad: never commit it.
 - End every comment you post to GitHub or the tracker with the `ATTRIBUTION` line in `.claude/workflow.env`.

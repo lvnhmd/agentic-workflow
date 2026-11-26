@@ -10,9 +10,9 @@
 
 ## How it was tested
 
-- [ ] `scripts/agentic/verify.sh` passes locally
-- [ ] Unit tests added/updated
-- [ ] Integration / e2e tests added/updated (if applicable)
+- [ ] Ran `scripts/agentic/verify.sh` on my machine: green
+- [ ] Unit tests cover the change
+- [ ] Integration or e2e tests cover it, where they apply
 - [ ] Verified in the running app (screenshots below, for UI changes)
 - [ ] Standards checked: WCAG / OWASP / API contract (if applicable)
 
@@ -26,7 +26,7 @@
 
 ## Risk and rollback
 
-Risk: Low | Medium | High
+Risk level: low / medium / high
 
 Rollback plan:
 

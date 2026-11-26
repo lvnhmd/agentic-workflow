@@ -36,7 +36,7 @@ jobs, no code changes", and stop. If the rerun call fails, show the error and st
 
 ## 4. Fix a real failure
 
-Read only the files the logs implicate. Make the minimal fix; don't refactor nearby code. Run the
+Open just the files the failing log points to. Make the minimal fix; don't refactor nearby code. Run the
 failing check locally until it passes, then the fast tier (`verify.sh --fast`).
 
 Commit `<KEY>: fix: <what broke>` (key from `aw-tracker from-branch`) and push. Report

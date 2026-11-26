@@ -98,7 +98,7 @@ if [ "$MODE" != "update" ]; then
   [ -n "$DEFAULT_BRANCH" ] || ask DEFAULT_BRANCH "Default branch" "$detected_branch"
   [ -n "$TRACKER" ] || ask TRACKER "Ticket tracker (jira|github)" "github"
   case "$TRACKER" in jira|github) ;; *) die "--tracker must be jira or github" ;; esac
-  if [ "$TRACKER" = jira ] && [ -z "$PREFIX" ]; then ask PREFIX "Jira project key (e.g. WEI)" "PROJ"; fi
+  if [ "$TRACKER" = jira ] && [ -z "$PREFIX" ]; then ask PREFIX "Jira project key (e.g. ABC)" "PROJ"; fi
   PREFIX="$(printf '%s' "$PREFIX" | tr '[:lower:]' '[:upper:]')"
   [ -n "$CI" ] || ask CI "CI provider (github|circleci|none)" "$detected_ci"
   case "$CI" in github|circleci|none) ;; *) die "--ci must be github, circleci or none" ;; esac
@@ -306,7 +306,7 @@ if [ -f "$TARGET/.claude/settings.json" ] && jq -e '(.hooks // {}) | (has("PreTo
   echo "        guardrails, so both will run. Keep the repo's if they're stricter, or remove them."
 fi
 
-# .gitignore: .env must be ignored. PROGRESS.md deliberately is NOT (it must stay visible in git status).
+# .gitignore: .env must be ignored. SESSION.md deliberately is NOT (it must stay visible in git status).
 if ! grep -qxE '\.env' "$TARGET/.gitignore" 2>/dev/null; then
   say "add .env to .gitignore"
   [ "$DRY" -eq 1 ] || printf '\n# local secrets (agentic workflow)\n.env\n' >> "$TARGET/.gitignore"
@@ -316,7 +316,7 @@ fi
 current_hooks="$(git -C "$TARGET" config --get core.hooksPath || true)"
 if [ "$uses_husky" -eq 1 ] && [ "$current_hooks" != ".githooks" ]; then
   echo "  NOTE: this repo manages git hooks with husky (.husky/): core.hooksPath was left alone and no"
-  echo "        .githooks/ were added. Make sure husky's hooks cover branch protection, PROGRESS.md, secrets"
+  echo "        .githooks/ were added. Make sure husky's hooks cover branch protection, SESSION.md, secrets"
   echo "        and a verify run (the kit's .githooks/pre-commit and pre-push show what they check)."
 elif [ "$current_hooks" != ".githooks" ]; then
   if [ -n "$current_hooks" ]; then

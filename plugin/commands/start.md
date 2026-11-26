@@ -1,5 +1,5 @@
 ---
-description: Start a ticket: take ownership, set it In Progress, read all of it, create the branch, and seed PROGRESS.md before any code is written.
+description: Start a ticket: take ownership, set it In Progress, read all of it, create the branch, and seed SESSION.md before any code is written.
 argument-hint: <ticket> [--stay] [--qa]
 ---
 
@@ -12,7 +12,7 @@ context, create the branch, then prepare to implement.
 
 - `--stay` — don't create a branch; work on the current one (stacking several tickets on one branch).
 - `--qa` — QA-rework mode: the work is already merged and the ticket came back from QA with comments.
-  Run the normal front door (assign, In Progress, branch), then hand off to `/qa-review-action`.
+  Run the normal front door (assign, In Progress, branch), then hand off to `/qa-feedback`.
   With `--stay` too, merge the latest default branch into the current branch first.
 
 All tracker calls go through `aw-tracker` (it reads `.claude/workflow.env` and `.env`).
@@ -26,7 +26,7 @@ Remove `--stay` / `--qa` from `$ARGUMENTS`, then normalise what's left:
 TICKET_KEY=$(aw-tracker key "<remaining argument>")
 ```
 
-## 2. Fetch the ticket and its comments
+## 2. Read the ticket, comments included
 
 ```bash
 aw-tracker get "$TICKET_KEY"
@@ -73,7 +73,7 @@ lists and ask which to use.
 **Type:** <type>   **Priority:** <priority>   **Status:** now In Progress
 **Parent:** <key — title, if any>
 **Branch (stay mode):** <current branch>
-**🔁 QA rework:** <only with --qa — "Work is already merged. Handing off to /qa-review-action after branch setup.">
+**🔁 QA rework:** <only with --qa — "Work is already merged. Handing off to /qa-feedback after branch setup.">
 
 ### Description
 <description>
@@ -109,12 +109,12 @@ git checkout "$(aw-config DEFAULT_BRANCH)" && git pull && git checkout -b "<tick
 
 If there are uncommitted changes, stop and ask before switching.
 
-## 9. Seed PROGRESS.md
+## 9. Seed SESSION.md
 
-Create `PROGRESS.md` in the repo root (never committed):
+Create `SESSION.md` in the repo root (never committed):
 
 ```markdown
-# PROGRESS.md — <key>: <title>
+# SESSION.md — <key>: <title>
 
 **Branch:** <branch>
 **Started:** <today>
@@ -132,13 +132,13 @@ _Nothing yet._
 <from the brief>
 ```
 
-- Not stay mode: if a PROGRESS.md exists, read it (it may hold unfinished notes worth mentioning), then
+- Not stay mode: if a SESSION.md exists, read it (it may hold unfinished notes worth mentioning), then
   replace it.
-- Stay mode with an existing PROGRESS.md: append a new `---` section for this ticket instead of
+- Stay mode with an existing SESSION.md: append a new `---` section for this ticket instead of
   overwriting.
 
 ## 10. Hand off or pause
 
-- `--qa`: say "Ticket set up for QA rework on `<branch>` — handing off to `/qa-review-action`." and run
-  `/qa-review-action $TICKET_KEY`. It has its own confirmation gates.
+- `--qa`: say "Ticket set up for QA rework on `<branch>` — handing off to `/qa-feedback`." and run
+  `/qa-feedback $TICKET_KEY`. It has its own confirmation gates.
 - Otherwise ask: "That's the plan. Anything to change before I write the first test?" and wait for the go-ahead before writing code.

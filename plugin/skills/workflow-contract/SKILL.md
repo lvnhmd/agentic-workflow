@@ -1,6 +1,6 @@
 ---
 name: workflow-contract
-description: The shared agentic-workflow contract — ticket lifecycle and its commands, docs-lead-code-follows rule, ADR policy, PROGRESS.md scratchpad, TDD, delegation, absolute rules, must/never lists. Load it before any ticket, code-change, PR, review or QA work in a repository that has .claude/workflow.env. Every lifecycle command loads it first.
+description: The shared agentic-workflow contract — ticket lifecycle and its commands, docs-lead-code-follows rule, ADR policy, SESSION.md scratchpad, TDD, delegation, absolute rules, must/never lists. Load it before any ticket, code-change, PR, review or QA work in a repository that has .claude/workflow.env. Every lifecycle command loads it first.
 ---
 
 # Workflow Contract
@@ -22,19 +22,19 @@ Ticket -> Refine -> Pick up -> Branch -> Test -> Code -> Gates -> PR -> Review -
 | Stage           | Command                                 | What happens                                                                            |
 | --------------- | --------------------------------------- | --------------------------------------------------------------------------------------- |
 | Shape a ticket  | `/refine <ticket>`                      | Questions, ranked approaches, conclusions posted to the ticket                          |
-| Start work      | `/pickup <ticket> [--stay] [--qa]`      | Assign, In Progress, read everything, branch, seed PROGRESS.md                          |
-| Log ad-hoc work | `/capture`                              | Turn the current conversation into a ticket (+ commit)                                  |
+| Start work      | `/start <ticket> [--stay] [--qa]`      | Assign, In Progress, read everything, branch, seed SESSION.md                          |
+| Log ad-hoc work | `/capture`                              | Record what this session did as a ticket (+ commit)                                  |
 | Ship            | `/push` or `/pr [--watch]`              | Full verify, commit, push, PR from the template, self-review, ticket to Review          |
-| Untracked fix   | `/pr-chore`                             | Small tooling/config PR from a temporary worktree; current branch untouched             |
+| Untracked fix   | `/ship-chore`                             | Small tooling/config PR from a temporary worktree; current branch untouched             |
 | Review others   | `/review <pr>`                          | Review against the standards below, then a formal GitHub verdict                        |
-| Answer review   | `/pr-action-review <pr> [--watch]`      | Triage comments: auto-fix, discuss, or reply; re-request review; offer merge            |
+| Answer review   | `/address-review <pr> [--watch]`      | Triage comments: auto-fix, discuss, or reply; re-request review; offer merge            |
 | Red CI          | `/fix-ci`                               | Read failed job logs; rerun flakes, fix real failures minimally                         |
-| QA bounce-back  | `/qa-review-action <ticket>`            | Classify QA points as bug / intended / out of scope; fix or push back with evidence     |
+| QA bounce-back  | `/qa-feedback <ticket>`            | Sort each QA point into defect, as-specified or not-this-ticket; fix it or answer with evidence     |
 | Maintenance     | `/morning`                              | Default-branch health, `/nightly-check`, `/dependabot-review`                           |
 | Housekeeping    | `/main`                                 | Back to the default branch, delete merged local branches safely                         |
 | Setup           | `/init`, `/doctor`                      | Set a repo up for the workflow; check that everything it needs works                    |
 
-- Work starts from a ticket. The tracker is the source of truth for acceptance criteria.
+- Work starts from a ticket. What the ticket says it must do is what counts as done.
 - All tracker access goes through `aw-tracker`, all CI access through `aw-ci` (both on PATH via the
   plugin). Never call the Jira, GitHub or CircleCI APIs ad hoc when a subcommand exists. Run either
   with `--help` for the subcommands.
@@ -58,7 +58,7 @@ current-state fact already answers.
 This only works while the architecture docs stay in sync: an ADR that changes current-state behaviour
 must update the matching `docs/architecture/*.md` file **in the same PR**. `check-adr-sync.sh` fails a
 diff that touches `docs/adr/` without touching `docs/architecture/`. For ADRs with genuinely no
-current-state impact (tooling, process), put `[skip-adr-sync: <reason>]` in a commit message on the branch.
+current-state impact (tooling, process), add `[skip-adr-sync: <reason>]` to any commit message on this branch.
 
 ## Docs Lead, Code Follows
 
@@ -76,16 +76,16 @@ current-state impact (tooling, process), put `[skip-adr-sync: <reason>]` in a co
 
 The Stop hook reminds you of this once per new set of changed files.
 
-## PROGRESS.md — Session Scratchpad
+## SESSION.md: notes for the session
 
-> **Primary development agent only.** Secondary sessions opened for quick, unrelated tasks (ticket
-> lookups, chores, one-off questions) must not write to PROGRESS.md.
+> **Only the session doing the branch's main work writes here.** Secondary sessions opened for quick, unrelated tasks (ticket
+> lookups, chores, one-off questions) must not write to SESSION.md.
 
-Keep `PROGRESS.md` in the repo root while working a ticket: progress after each milestone, decisions
+Keep `SESSION.md` in the repo root while working a ticket: progress after each milestone, decisions
 made, problems hit, open questions, direction changes. It is the progress record, a temporary home for
 discoveries, and the recovery point when a session is interrupted.
 
-- `/pickup` seeds it from the ticket. `/pr` reads it back to find docs to update, then deletes it.
+- `/start` seeds it from the ticket. `/pr` reads it back to find docs to update, then deletes it.
 - **It stays local.** The pre-commit hook refuses it if staged, and the pre-push hook checks every
   commit being pushed. Don't git-ignore it either: it should stay visible in `git status`.
 - Plans end with a short list of unresolved questions.
@@ -143,7 +143,7 @@ Non-negotiable. No exceptions, no workarounds.
 - Follow the branch and commit conventions in `CONTRIBUTING.md`; include the ticket key.
 - Fill the PR template fully: ticket, summary, test evidence, risk, rollback.
 - Verify UI changes in the running app, against the design when one exists.
-- Keep docs in sync in the same PR.
+- Docs change in the PR that changes the behaviour.
 - Use structured logging with a correlation/trace ID across boundaries (for services).
 
 ## What You MUST Never Do
@@ -159,6 +159,6 @@ Non-negotiable. No exceptions, no workarounds.
 
 ## PR Reviews
 
-Whenever you review a PR — your own (`/pr`, `/pr-chore`) or someone else's (`/review`) — load the
+Whenever you review a PR — your own (`/pr`, `/ship-chore`) or someone else's (`/review`) — load the
 `review-standards` skill first and follow it exactly: history check, lenses, 🔴/🟡/🔵 classification,
 verdict rules, comment format and the formal GitHub review.

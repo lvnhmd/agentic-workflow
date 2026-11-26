@@ -1,6 +1,6 @@
 ---
 name: assign-epic
-description: Link a ticket to the most relevant open epic (Jira) or milestone (GitHub), asking the user when it's ambiguous. Use right after a ticket is created, when /pickup finds a ticket without one, or when the user says "assign epic" / "where does this ticket go".
+description: Link a ticket to the most relevant open epic (Jira) or milestone (GitHub), asking the user when it's ambiguous. Use right after a ticket is created, when /start finds a ticket without one, or when the user says "assign epic" / "where does this ticket go".
 ---
 
 # Assign a ticket to the right epic

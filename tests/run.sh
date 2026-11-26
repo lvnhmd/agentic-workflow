@@ -36,22 +36,22 @@ check "every aw-* helper the commands mention exists in bin/" '[ -z "$missing_bi
 check "no command still calls the old in-repo scripts" '! grep -rqE "scripts/agentic/(tracker|ci)\.sh|aw_load_config" "$PL/commands" "$PL/skills" "$PL/agents"'
 check "repo copy of lib.sh matches the plugin's" 'cmp -s "$PL/lib/lib.sh" "$PL/project-template/scripts/agentic/lib.sh"'
 check "review standards live in their own skill, not the contract" '! grep -q "## Verdict" "$PL/skills/workflow-contract/SKILL.md" && grep -q "## Verdict" "$PL/skills/review-standards/SKILL.md"'
-missing_load="$(for c in pickup refine capture push pr pr-chore review pr-action-review fix-ci qa-review-action; do grep -q "workflow-contract" "$PL/commands/$c.md" || echo "$c"; done)"
+missing_load="$(for c in start refine capture push pr ship-chore review address-review fix-ci qa-feedback; do grep -q "workflow-contract" "$PL/commands/$c.md" || echo "$c"; done)"
 check "every lifecycle command loads the workflow-contract skill" '[ -z "$missing_load" ]'
 
 echo "== installer"
 R="$WORK/jira-repo"; new_repo "$R" node
-bash "$KIT/install.sh" -y --tracker jira --prefix wei --ci circleci "$R" >"$WORK/install.log" 2>&1
+bash "$KIT/install.sh" -y --tracker jira --prefix abc --ci circleci --marketplace "$KIT" "$R" >"$WORK/install.log" 2>&1
 check "install exits 0" '[ $? -eq 0 ]'
 check "workflow.env rendered with detected repo" 'grep -q "^REPO_SLUG=\"acme/widgets\"" "$R/.claude/workflow.env"'
-check "prefix upper-cased" 'grep -q "^TICKET_PREFIX=\"WEI\"" "$R/.claude/workflow.env"'
+check "prefix upper-cased" 'grep -q "^TICKET_PREFIX=\"ABC\"" "$R/.claude/workflow.env"'
 check "node preset applied" 'grep -q "prettier" "$R/.claude/workflow.env" && grep -q "npm test" "$R/.claude/verify-steps"'
 check "no unrendered placeholders" '! grep -rIl "{{[A-Z_]*}}" "$R" --exclude-dir=.git'
 check "settings enable the plugin" 'jq -e ".enabledPlugins[\"agentic-workflow@agentic-workflow\"] == true" "$R/.claude/settings.json" >/dev/null'
 check "marketplace source points at the kit folder" 'jq -e --arg p "$KIT" ".extraKnownMarketplaces[\"agentic-workflow\"].source == {source: \"directory\", path: \$p}" "$R/.claude/settings.json" >/dev/null'
 check "deny rules installed" 'jq -e ".permissions.deny | index(\"Read(./.env)\")" "$R/.claude/settings.json" >/dev/null'
 check "no commands/agents copied into the repo" '[ ! -e "$R/.claude/commands" ] && [ ! -e "$R/.claude/agents" ]'
-check "branch example uses prefix" 'grep -q "wei-42-export-button" "$R/CONTRIBUTING.md"'
+check "branch example uses prefix" 'grep -q "abc-42-export-button" "$R/CONTRIBUTING.md"'
 check "scripts executable" '[ -x "$R/scripts/agentic/verify.sh" ] && [ -x "$R/.githooks/pre-push" ]'
 check "hooksPath set" '[ "$(git -C "$R" config core.hooksPath)" = ".githooks" ]'
 check ".env git-ignored" 'grep -qx ".env" "$R/.gitignore"'
@@ -95,15 +95,15 @@ expect allow Bash "rm -rf ./build"
 expect allow Bash "rm -rf node_modules dist"
 expect deny  Bash "git push --force origin main"
 expect deny  Bash "git push -f origin HEAD:main"
-expect ask   Bash "git push --force-with-lease origin wei-1-thing"
+expect ask   Bash "git push --force-with-lease origin abc-1-thing"
 expect ask   Bash "git push origin main"
-expect allow Bash "git push -u origin wei-1-thing"
+expect allow Bash "git push -u origin abc-1-thing"
 expect ask   Bash "git commit --no-verify -m x"
 expect ask   Bash "git commit -n -m x"
 expect allow Bash "git commit -m \"fix -n flag\""
 expect ask   Bash "git reset --hard HEAD~1"
 expect ask   Bash "git checkout ."
-expect allow Bash "git checkout -b wei-2-x"
+expect allow Bash "git checkout -b abc-2-x"
 expect ask   Bash "git branch -D old"
 expect deny  Bash "npx prisma db push"
 expect deny  Bash "psql -c 'DROP TABLE users'"
@@ -163,7 +163,7 @@ check "husky repo: doctor doesn't demand .githooks" '! jq -e "any(.[]; .check | 
 
 echo "== SessionStart hook"
 ss="$(cd "$R" && bash "$PL/hooks/session-start.sh")"
-check "injects the brief: config, rules, pointer to the contract skill" 'jq -e ".hookSpecificOutput.additionalContext | contains(\"tracker=jira prefix=WEI\") and contains(\"workflow-contract skill\") and contains(\"aw-tracker\")" <<<"$ss" >/dev/null'
+check "injects the brief: config, rules, pointer to the contract skill" 'jq -e ".hookSpecificOutput.additionalContext | contains(\"tracker=jira prefix=ABC\") and contains(\"workflow-contract skill\") and contains(\"aw-tracker\")" <<<"$ss" >/dev/null'
 check "brief stays under the 2 KB Claude Code shows inline" '[ "$(jq -r .hookSpecificOutput.additionalContext <<<"$ss" | wc -c)" -lt 2000 ]'
 check "warns about missing Jira credentials" 'jq -r ".hookSpecificOutput.additionalContext" <<<"$ss" | grep -q "Jira credentials are missing"'
 ss2="$(cd "$U" && bash "$PL/hooks/session-start.sh")"
@@ -176,7 +176,7 @@ ss3="$(cd "$WORK" && bash "$PL/hooks/session-start.sh")"
 check "silent outside git repos" '[ -z "$ss3" ]'
 
 echo "== aw-config / aw-doctor"
-check "aw-config returns a value" '[ "$(cd "$R" && bash "$PL/bin/aw-config" TICKET_PREFIX)" = "WEI" ]'
+check "aw-config returns a value" '[ "$(cd "$R" && bash "$PL/bin/aw-config" TICKET_PREFIX)" = "ABC" ]'
 check "aw-config refuses secrets" '! (cd "$R" && bash "$PL/bin/aw-config" JIRA_API_TOKEN >/dev/null 2>&1)'
 cfg="$(cd "$R" && bash "$PL/bin/aw-config")"
 check "aw-config lists settings" 'grep -q "^STATUS_DONE=Done" <<<"$cfg" && grep -q "^TRACKER=jira" <<<"$cfg"'
@@ -195,19 +195,19 @@ EOF
 git -C "$R" add -A >/dev/null; git -C "$R" -c core.hooksPath=/dev/null commit -qm steps
 echo a > "$R/a.txt"; git -C "$R" add a.txt
 git -C "$R" commit -qm "on main" >/dev/null 2>&1; check "commit on main blocked" '[ $? -ne 0 ]'
-git -C "$R" checkout -qb wei-1-thing
-echo p > "$R/PROGRESS.md"; git -C "$R" add PROGRESS.md
-git -C "$R" commit -qm "progress" >/dev/null 2>&1; check "committing PROGRESS.md blocked" '[ $? -ne 0 ]'
-git -C "$R" restore --staged PROGRESS.md; rm "$R/PROGRESS.md"
+git -C "$R" checkout -qb abc-1-thing
+echo p > "$R/SESSION.md"; git -C "$R" add SESSION.md
+git -C "$R" commit -qm "progress" >/dev/null 2>&1; check "committing SESSION.md blocked" '[ $? -ne 0 ]'
+git -C "$R" restore --staged SESSION.md; rm "$R/SESSION.md"
 echo "SECRET=1" > "$R/.env.local"; git -C "$R" add -f .env.local
 git -C "$R" commit -qm "env" >/dev/null 2>&1; check "committing .env.local blocked" '[ $? -ne 0 ]'
 git -C "$R" restore --staged .env.local; rm "$R/.env.local"
-git -C "$R" commit -qm "WEI-1: feat: a" >/dev/null 2>&1; check "normal commit on feature branch passes" '[ $? -eq 0 ]'
+git -C "$R" commit -qm "ABC-1: feat: a" >/dev/null 2>&1; check "normal commit on feature branch passes" '[ $? -eq 0 ]'
 BARE="$WORK/remote.git"; git init -q --bare "$BARE"; git -C "$R" remote set-url origin "$BARE"
-git -C "$R" push -q origin wei-1-thing >/dev/null 2>&1; check "pre-push passes with green fast tier" '[ $? -eq 0 ]'
+git -C "$R" push -q origin abc-1-thing >/dev/null 2>&1; check "pre-push passes with green fast tier" '[ $? -eq 0 ]'
 echo 'fast | Always fails | false' >> "$R/.claude/verify-steps"; echo b > "$R/b.ts"; git -C "$R" add -A
-git -C "$R" commit -qm "WEI-1: feat: b" >"$WORK/commit-b.log" 2>&1
-git -C "$R" push -q origin wei-1-thing >"$WORK/push-b.log" 2>&1; check "pre-push blocks on a failing fast step" '[ $? -ne 0 ]'
+git -C "$R" commit -qm "ABC-1: feat: b" >"$WORK/commit-b.log" 2>&1
+git -C "$R" push -q origin abc-1-thing >"$WORK/push-b.log" 2>&1; check "pre-push blocks on a failing fast step" '[ $? -ne 0 ]'
 
 echo "== verify.sh"
 out="$(cd "$R" && bash scripts/agentic/verify.sh --list)"
@@ -223,12 +223,12 @@ out=""; method=GET; url=""; data=""
 while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift 2;; -X) method="$2"; shift 2;; --data-binary) data="$2"; shift 2;; -w|-u|-H) shift 2;; -*) shift;; *) url="$1"; shift;; esac; done
 echo "$method $url $data" >> "$STUB_LOG"
 case "$method $url" in
-  "GET "*"/issue/WEI-7/transitions") body='{"transitions":[{"id":"31","name":"Start progress","to":{"name":"In Progress"}},{"id":"41","name":"Review","to":{"name":"Review"}}]}' ;;
-  "GET "*"/issue/WEI-7/comment"*) body='{"total":2,"comments":[{"author":{"displayName":"Ana"},"created":"2026-01-01","body":"Use the v2 API"},{"author":{"displayName":"Bot"},"created":"2026-01-02","body":"done\n\n_Actioned by Claude Code_"}]}' ;;
-  "GET "*"/issue/WEI-7"*) body='{"key":"WEI-7","fields":{"summary":"Export button","description":"h2. AC","status":{"name":"To Do"},"issuetype":{"name":"Story"},"priority":{"name":"High"},"assignee":null,"labels":["ui"],"subtasks":[{"key":"WEI-8","fields":{"summary":"Sub","status":{"name":"To Do"}}}],"issuelinks":[],"parent":{"key":"WEI-1","fields":{"summary":"Epic","issuetype":{"name":"Epic"}}}}}' ;;
+  "GET "*"/issue/ABC-7/transitions") body='{"transitions":[{"id":"31","name":"Start progress","to":{"name":"In Progress"}},{"id":"41","name":"Review","to":{"name":"Review"}}]}' ;;
+  "GET "*"/issue/ABC-7/comment"*) body='{"total":2,"comments":[{"author":{"displayName":"Ana"},"created":"2026-01-01","body":"Use the v2 API"},{"author":{"displayName":"Bot"},"created":"2026-01-02","body":"done\n\n_Actioned by Claude Code_"}]}' ;;
+  "GET "*"/issue/ABC-7"*) body='{"key":"ABC-7","fields":{"summary":"Export button","description":"h2. AC","status":{"name":"To Do"},"issuetype":{"name":"Story"},"priority":{"name":"High"},"assignee":null,"labels":["ui"],"subtasks":[{"key":"ABC-8","fields":{"summary":"Sub","status":{"name":"To Do"}}}],"issuelinks":[],"parent":{"key":"ABC-1","fields":{"summary":"Epic","issuetype":{"name":"Epic"}}}}}' ;;
   "GET "*"/myself") body='{"accountId":"abc:123"}' ;;
   "POST "*"/comment") body='{"id":"900"}' ;;
-  "POST "*"/rest/api/2/issue") body='{"key":"WEI-99"}' ;;
+  "POST "*"/rest/api/2/issue") body='{"key":"ABC-99"}' ;;
   *) body='{}' ;;
 esac
 if [ -n "$out" ]; then printf '%s' "$body" > "$out"; printf 200; else printf '%s' "$body"; fi
@@ -237,20 +237,20 @@ chmod +x "$STUB/curl"
 export STUB_LOG="$WORK/stub.log"; : > "$STUB_LOG"
 printf 'JIRA_BASE_URL=https://acme.atlassian.net\nJIRA_EMAIL=me@acme.test\nJIRA_API_TOKEN=tok\n' > "$R/.env"
 T() { (cd "$R" && PATH="$STUB:$PATH" bash "$PL/bin/aw-tracker" "$@"); }
-check "key normalises a bare number" '[ "$(T key 7)" = "WEI-7" ]'
-check "key normalises a browse URL" '[ "$(T key https://acme.atlassian.net/browse/wei-7)" = "WEI-7" ]'
-check "from-branch finds the key" '[ "$(T from-branch wei-7-export-button)" = "WEI-7" ]'
+check "key normalises a bare number" '[ "$(T key 7)" = "ABC-7" ]'
+check "key normalises a browse URL" '[ "$(T key https://acme.atlassian.net/browse/abc-7)" = "ABC-7" ]'
+check "from-branch finds the key" '[ "$(T from-branch abc-7-export-button)" = "ABC-7" ]'
 check "from-branch ignores chore branches" '[ -z "$(T from-branch chore/bump-deps)" ]'
 j="$(T get 7)"
-check "get normalises fields" 'jq -e ".title == \"Export button\" and .parent.key == \"WEI-1\" and .subtasks[0].key == \"WEI-8\" and .assignee == null" <<<"$j" >/dev/null'
-c="$(T comments WEI-7)"
+check "get normalises fields" 'jq -e ".title == \"Export button\" and .parent.key == \"ABC-1\" and .subtasks[0].key == \"ABC-8\" and .assignee == null" <<<"$j" >/dev/null'
+c="$(T comments ABC-7)"
 check "comments flag agent-authored ones" 'jq -e "[.[].by_agent] == [false, true]" <<<"$c" >/dev/null'
-T transition WEI-7 "in progress" >/dev/null
-check "transition matches the target status name" 'grep -q "POST .*/issue/WEI-7/transitions {\"transition\":{\"id\":\"31\"}}" "$STUB_LOG"'
-printf '## Plan\n- **bold** item\n' > "$WORK/c.md"; T comment WEI-7 "$WORK/c.md" >/dev/null
-check "comment converts markdown and appends attribution" 'grep "POST .*/WEI-7/comment" "$STUB_LOG" | grep -q "h2. Plan.*\* \*bold\* item.*Actioned by Claude Code"'
-check "create returns the new key" '[ "$(T create Bug "Broken" "$WORK/c.md")" = "WEI-99" ]'
-T transition WEI-7 "Nope" >/dev/null 2>&1; check "unknown transition fails clearly" '[ $? -ne 0 ]'
+T transition ABC-7 "in progress" >/dev/null
+check "transition matches the target status name" 'grep -q "POST .*/issue/ABC-7/transitions {\"transition\":{\"id\":\"31\"}}" "$STUB_LOG"'
+printf '## Plan\n- **bold** item\n' > "$WORK/c.md"; T comment ABC-7 "$WORK/c.md" >/dev/null
+check "comment converts markdown and appends attribution" 'grep "POST .*/ABC-7/comment" "$STUB_LOG" | grep -q "h2. Plan.*\* \*bold\* item.*Actioned by Claude Code"'
+check "create returns the new key" '[ "$(T create Bug "Broken" "$WORK/c.md")" = "ABC-99" ]'
+T transition ABC-7 "Nope" >/dev/null 2>&1; check "unknown transition fails clearly" '[ $? -ne 0 ]'
 rm "$R/.env"; err="$(T get 7 2>&1)"; rc=$?
 check "missing credentials fail with a clear error" '[ $rc -ne 0 ] && grep -q "missing JIRA_BASE_URL" <<<"$err"'
 
@@ -282,7 +282,7 @@ check "github adapter never uses GraphQL-backed gh issue commands" '! grep -nE "
 check "github Done closes the issue" 'grep -q "gh api -X PATCH repos/acme/widgets/issues/12 -f state=closed" "$STUB_LOG"'
 : > "$STUB_LOG"; TG transition 12 Review >/dev/null
 check "github status change swaps status labels" 'grep -q "DELETE repos/acme/widgets/issues/12/labels/status%3Ain-progress" "$STUB_LOG" && grep -q "labels\[\]=status:review" "$STUB_LOG"'
-s="$(CG status wei-1)"
+s="$(CG status abc-1)"
 check "ci status keeps only the head commit's runs, with failed jobs" 'jq -e "length == 1 and .[0].failed_jobs[0].id == \"77\"" <<<"$s" >/dev/null'
 (cd "$G" && sed -i.bak 's/^CI_PROVIDER=.*/CI_PROVIDER="none"/' .claude/workflow.env && bash "$PL/bin/aw-ci" status >/dev/null 2>&1); rc=$?
 check "CI_PROVIDER=none exits 3" '[ $rc -eq 3 ]'

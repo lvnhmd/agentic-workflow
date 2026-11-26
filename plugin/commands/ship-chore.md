@@ -6,13 +6,13 @@ argument-hint: <short-description>
 Load the `workflow-contract` skill first if it isn't loaded in this session yet: its rules apply to every step below.
 
 Open a chore PR containing only the files named in this conversation. **The current branch must not be
-touched** beyond removing those exact files: other agents may be working on it. No PROGRESS.md.
+touched** beyond removing those exact files: other agents may be working on it. No SESSION.md.
 
 Config values come from `aw-config <KEY>`.
 
-## 1. Identify the files
+## 1. Pin down the change
 
-List the exact files from the discussion. Don't infer extras; confirm with the user if unsure.
+Name every file the conversation agreed to change. Don't infer extras; confirm with the user if unsure.
 
 ## 2. Create a worktree from the default branch
 
@@ -29,7 +29,7 @@ git worktree add -b "$CHORE_BRANCH" "$WT" "origin/$(aw-config DEFAULT_BRANCH)"
 one explicitly (`git status` alone misses files identical to the default branch):
 
 ```bash
-for f in <files>; do test -f "$WT/$f" && echo "present: $f" || echo "MISSING: $f"; done
+for f in <files>; do test -f "$WT/$f" && echo "ok      $f" || echo "absent  $f"; done
 ```
 
 Don't continue until every file is present.

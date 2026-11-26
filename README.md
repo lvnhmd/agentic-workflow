@@ -1,18 +1,36 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.png">
-  <img alt="agentic-workflow: AI writes the code. Your guardrails decide what ships. A Claude Code plugin by Connect The Dots." src="assets/banner-light.png">
-</picture>
+# agentic-workflow
 
-A Claude Code plugin that takes software work from ticket to merged pull request, with the coding agent
-working inside checks it can't argue with. People keep the intent; the agent does the typing; seven
-independent layers sit between the two. Built and maintained by [Connect The Dots](https://ctdai.co.uk/),
-and the workflow we use on our own products.
+**AI writes the code. Your guardrails decide what ships.**
 
-[How we build](https://ctdai.co.uk/method) · [Install](#install) · [Configure](#configure) · [Extend](#extend-it-for-a-project) · [Book a workflow call](https://calendar.app.google/p9NTULVBdHh4wZi9A)
+My agentic development workflow for Claude Code, packaged as a plugin. It takes work from ticket to
+merged pull request, with the coding agent working inside checks it can't argue with. People keep the
+intent; the agent does the typing; seven independent layers sit between the two. I use it every day and
+keep changing it as I learn, so treat it as a working setup rather than a finished framework.
+
+[Install](#install) · [Configure](#configure) · [Extend](#extend-it-for-a-project)
 
 ```
-Ticket → /refine → /pickup → test-first code → hooks + gates → /pr → review → /pr-action-review → merge → /qa-review-action
+Ticket → /refine → /start → test-first code → hooks + gates → /pr → review → /address-review → merge → /qa-feedback
 ```
+
+## Install in 30 seconds
+
+In Claude Code:
+
+```
+/plugin marketplace add lvnhmd/agentic-workflow
+/plugin install agentic-workflow@agentic-workflow
+```
+
+Then open Claude Code in your repo and run:
+
+```
+/init
+```
+
+`/init` detects your GitHub repo, default branch, CI and stack, asks only what it can't detect, writes the
+project files and finishes with `/doctor`. Commit the result on a branch and you're running. Needs `git`,
+`jq`, `perl`, `curl` and a logged-in `gh`; full details are under [Install](#install).
 
 ## Seven layers between an agent and your main branch
 
@@ -40,7 +58,7 @@ The **plugin** carries everything that's the same in every project and updates i
 | Lives in the plugin (`plugin/`) | Lives in each repo (written by `/init`) |
 | ------------------------------- | --------------------------------------- |
 | Workflow contract, loaded at session start | `CLAUDE.md` — project overview, repo map, what to read, project rules |
-| 16 commands: `/refine` `/pickup` `/capture` `/push` `/pr` `/pr-chore` `/review` `/pr-action-review` `/fix-ci` `/qa-review-action` `/nightly-check` `/dependabot-review` `/morning` `/main` `/init` `/doctor` | `.claude/workflow.env` — tracker, ticket prefix, CI, status names, formatters, app URL |
+| 16 commands: `/refine` `/start` `/capture` `/push` `/pr` `/ship-chore` `/review` `/address-review` `/fix-ci` `/qa-feedback` `/nightly-check` `/dependabot-review` `/morning` `/main` `/init` `/doctor` | `.claude/workflow.env` — tracker, ticket prefix, CI, status names, formatters, app URL |
 | Agents: `worker` (Haiku), `advisor` (Opus), `adversary` (security), `tdd-critic` | `.claude/verify-steps` — the local mirror of CI (fast tier on push, full before PR) |
 | Skills: `review-standards`, `run`, `assign-epic` | `.claude/settings.json` — enables the plugin for the team, permission allow/deny lists |
 | Hooks: block destructive commands, format each edit, docs-sync reminder, contract + setup warnings at start | `.githooks/` + `scripts/agentic/` — pre-commit / pre-push gates, `verify.sh`, ADR sync check |
@@ -116,7 +134,7 @@ Secrets go in the git-ignored `.env` (template: `.env.workflow.example`): `JIRA_
 ## Develop the kit
 
 ```bash
-bash tests/run.sh      # 121 checks: manifests, installer, update/merge, every hook rule, session start,
+bash tests/run.sh      # 119 checks: manifests, installer, update/merge, every hook rule, session start,
                        # git hooks, verify, aw-config, aw-doctor, tracker and CI adapters (stubbed)
 claude --plugin-dir ./plugin   # try local changes without reinstalling
 ```
@@ -127,12 +145,4 @@ claude --plugin-dir ./plugin   # try local changes without reinstalling
 
 ---
 
-<p>
-  <a href="https://ctdai.co.uk/"><img src="assets/dots.png" width="34" height="10" alt="Connect The Dots"></a>&nbsp;
-  <b>Connect The Dots</b> · AI, data &amp; cloud consultancy ·
-  <a href="https://ctdai.co.uk/">ctdai.co.uk</a> ·
-  <a href="https://ctdai.co.uk/method">How we build</a> ·
-  <a href="https://calendar.app.google/p9NTULVBdHh4wZi9A">Book a workflow call</a>
-</p>
-
-MIT licensed. © 2026 Connect The Dots Ltd, registered in England and Wales, company no. 11388274.
+MIT licensed. © 2026 Elvin Ali.
